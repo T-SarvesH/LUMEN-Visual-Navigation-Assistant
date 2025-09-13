@@ -1,0 +1,102 @@
+# ========================
+# React Native / Node
+# ========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+yarn.lock
+package-lock.json
+
+# Expo
+.expo/
+.expo-shared/
+
+# Metro / React Native cache
+.expo/
+.expo-shared/
+.expo-dev/
+.expo-web/
+.expo-build/
+.expo-updates/
+.expo-tools/
+.expo-logs/
+.expo-dev-client/
+.expo-env/
+.expo-tests/
+.expo-publish/
+.expo-cli/
+.expo-preview/
+.expo-cache/
+.expo-packager/
+.expo-app/
+
+# Build outputs
+android/app/build/
+ios/Pods/
+ios/build/
+*.xcworkspace
+*.xcuserstate
+*.xcuserdata
+*.xcuserdatad
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+
+# Gradle
+.gradle/
+*.iml
+local.properties
+
+# macOS & IDEs
+.DS_Store
+.idea/
+.vscode/
+
+# ========================
+# Python
+# ========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.manifest
+*.spec
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# Coverage / Testing
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+.pyre/
+
+# ========================
+# General
+# ========================
+*.swp
+*.swo
+*~
