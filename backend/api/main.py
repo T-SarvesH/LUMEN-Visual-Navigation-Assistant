@@ -1,50 +1,47 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 import json
-import logging
-
-#Importing all API models
 from models import coordinates
 
-app = FastAPI(title="Lumen Application Programming interface")
+app = FastAPI(title="Lumen API")
 
 app.add_middleware(
-
     CORSMiddleware,
-    allowed_origins=["*"],
-    allowed_headers=["*"],
-    allowed_hosts=["*"],
-    allowed_methods=["*"],
+    allow_headers=["*"],
+    allow_methods=["*"],
+    allow_credentials=True,
+    allow_origins=["*"],
 )
 
 @app.get("/")
 async def root():
     return {"message": "Welcome to Lumen API"}
 
-
-# Websocket endpoint for IMU data
-@app.websocket("/ws/vioService")
-async def vioService(websocket: WebSocket):
-
+@app.websocket("/ws/vio")
+async def vio_service(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
-            data_str = await websocket.receive()
+            data_str = await websocket.receive_text()
             data_pack = json.loads(data_str)
 
-            if 'imu_reading' in data_pack:
+            # handle batch
+            if 'imu_readings' in data_pack:
+                for imu_data in data_pack['imu_readings']:
+                    response = coordinates(
+                        coord_x=imu_data['x'],
+                        coord_y=imu_data['y'],
+                        coord_z=imu_data['z']
+                    )
+                    print({'type': imu_data.get('type'), 'coordinates': response.model_dump()})
 
-                imu_data = data_pack['imu_reading']
-
-                response = coordinates(
-
-                    coord_x=imu_data['x'],
-                    coord_y=imu_data['y'],
-                    coord_z=imu_data['z']
-                )
-                await websocket.send_text(json.dumps({'coordinates': response.model_dump()}))
+                # optionally send ack
+                await websocket.send_text(json.dumps({
+                    'status': 'batch_received',
+                    'count': len(data_pack['imu_readings'])
+                }))
 
     except WebSocketDisconnect:
-        return {'message': 'Client is Disconnected'}
+        print("Client disconnected")
     except Exception as e:
-        return {'Exception': str(e)}
+        print("Exception:", str(e))

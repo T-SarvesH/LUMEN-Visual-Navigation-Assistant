@@ -1,5 +1,7 @@
 import { accelerometer, gyroscope, setUpdateIntervalForType, SensorTypes } from 'react-native-sensors';
 
+// Note: Fill out the field using ur own home nw priv IP. Later will remain static when we get a static IP / Hosting
+
 const WEBSOCKET_URL = 'ws://<COMP_PRIVATE_IP>/ws/vio';
 
 class VioService {
