@@ -1,9 +1,28 @@
-import { View, Text } from "react-native";
+import React from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator, NativeStackNavigationProp } from '@react-navigation/native-stack';
 
-export default function App() {
+// Screens
+import LandingScreen from './screens/LandingPage';
+import CameraCaptureScreen from './screens/CameraCaptureScreen';
+
+// Stack param list
+export type RootStackParamList = {
+  Landing: undefined;
+  CameraCapture: undefined;
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+const App: React.FC = () => {
   return (
-    <View className="flex-1 items-center justify-center bg-blue-500">
-      <Text className="text-white text-lg">Hello NativeWind</Text>
-    </View>
+    <NavigationContainer>
+      <Stack.Navigator initialRouteName="Landing" screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Landing" component={LandingScreen} />
+        <Stack.Screen name="CameraCapture" component={CameraCaptureScreen} />
+      </Stack.Navigator>
+    </NavigationContainer>
   );
-}
+};
+
+export default App;
