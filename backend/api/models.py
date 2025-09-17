@@ -7,6 +7,4 @@ class coordinates(BaseModel):
 
     coord_x: float = Field(..., examples=1)
     coord_y: float = Field(..., examples=1)
-    coord_z: float = Field(..., examples=1)
-
-    
+    coord_z: float = Field(..., examples=1)    

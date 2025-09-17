@@ -3,10 +3,11 @@
   "compilerOptions": {
     "strict": true,
     "jsx": "react-native",
-    "types": ["nativewind"]
+    "types": ["nativewind", "node"],
   },
   "include": [
     "nativewind.d.ts",
+    "global.d.ts",
     "**/*.ts",
     "**/*.tsx"
   ],
