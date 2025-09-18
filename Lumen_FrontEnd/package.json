@@ -26,6 +26,7 @@
     "react-native-sensors": "^7.3.6",
     "react-native-svg": "^15.13.0",
     "react-native-vision-camera": "^4.7.2",
+    "react-native-webrtc": "^124.0.6",
     "react-native-worklets-core": "^1.6.2"
   },
   "devDependencies": {

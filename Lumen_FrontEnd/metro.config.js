@@ -1,11 +1,18 @@
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
+const path = require('path');
 
-/**
- * Metro configuration
- * https://reactnative.dev/docs/metro
- *
- * @type {import('@react-native/metro-config').MetroConfig}
- */
-const config = {};
+const defaultConfig = getDefaultConfig(__dirname);
 
-module.exports = mergeConfig(getDefaultConfig(__dirname), config);
+const config = {
+  resolver: {
+    extraNodeModules: {
+      // Force Metro to resolve event-target-shim correctly
+      'event-target-shim': path.resolve(
+        __dirname,
+        'node_modules/event-target-shim'
+      ),
+    },
+  },
+};
+
+module.exports = mergeConfig(defaultConfig, config);
