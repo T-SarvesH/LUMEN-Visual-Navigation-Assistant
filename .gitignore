@@ -101,3 +101,6 @@ htmlcov/
 *.swp
 *.swo
 *~
+
+#dataset directories for the models (You can download them seperately for local training)
+*/Environmental_Hazard_Lumen/Environmental_Hazard*
