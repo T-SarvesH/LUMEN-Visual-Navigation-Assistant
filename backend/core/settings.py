@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'api',
     'Object_Detection_and_Scene_Description_Model',
+    'Scene_Description_Module'
 ]
 
 MIDDLEWARE = [
