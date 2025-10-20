@@ -106,3 +106,6 @@ htmlcov/
 */Environmental_Hazard_Lumen/Environmental_Hazard*
 */Animal_Detection_Lumen/Animal*
 */Vehicle_Detection_Lumen/Vehicle*
+*/EfficientNet-Router-Model/Dataset
+
+*/EfficientNet-Router-Model/trained_models/*
