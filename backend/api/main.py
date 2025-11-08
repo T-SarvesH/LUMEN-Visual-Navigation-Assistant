@@ -1,20 +1,24 @@
 import sys
 import os
-
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-
 import json
 import cv2
 import asyncio
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from ultralytics import YOLO
-
-from aiortc import RTCPeerConnection, RTCSessionDescription
-from aiortc.contrib.media import MediaStreamTrack
+from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
 
+# --- Add project path ---
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+# --- Import LUMEN pipeline ---
+from models_pipeline.inference import InferenceManager
+
+# ==============================
+# 🌐 FASTAPI SETUP
+# ==============================
 app = FastAPI(title="Lumen API")
+
 app.add_middleware(
     CORSMiddleware,
     allow_headers=["*"],
@@ -23,29 +27,50 @@ app.add_middleware(
     allow_origins=["*"],
 )
 
-#MODEL_PATH is a env var so set it up on .bashrc
-model = YOLO(os.getenv("MODEL_PATH") + '/' + 'best.pt').to("cuda")
+# ==============================
+# ⚙️ Initialize Inference Pipeline
+# ==============================
+print("🚀 Initializing full LUMEN inference pipeline...")
+inference_manager = InferenceManager()
+print("✅ LUMEN pipeline ready for live inference.")
 
-from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
-from av import VideoFrame
 
-class YoloTrack(VideoStreamTrack):
+# ==============================
+# 🎥 LumenTrack - Full Inference Stream
+# ==============================
+class LumenTrack(VideoStreamTrack):
     """
-    Takes frames from incoming track, runs YOLO, returns annotated frames.
+    Receives frames from incoming WebRTC video track,
+    runs full LUMEN inference (Router + YOLO + Threat Detection),
+    and returns annotated frames in real time.
     """
     kind = "video"
 
-    def __init__(self, track):
+    def __init__(self, track, pc, metadata_channel=None):
         super().__init__()
         self.track = track
+        self.pc = pc
+        self.metadata_channel = metadata_channel
 
     async def recv(self):
+        # Get next frame
         frame = await self.track.recv()
         img = frame.to_ndarray(format="bgr24")
 
-        # Run YOLO detection
-        results = model(img, verbose=False)
-        annotated = results[0].plot()
+        # Run the full inference pipeline
+        annotated, router_probs, active_classes, detections, threat_data = inference_manager.process_frame(
+            img, return_info=True
+        )
+
+        # --- Optional metadata stream over WebRTC DataChannel ---
+        if self.metadata_channel and self.metadata_channel.readyState == "open":
+            payload = json.dumps({
+                "router_probs": router_probs,
+                "active_classes": active_classes,
+                "detections": detections,
+                "threat_data": threat_data
+            })
+            asyncio.ensure_future(self.metadata_channel.send(payload))
 
         # Convert back to VideoFrame
         new_frame = VideoFrame.from_ndarray(annotated, format="bgr24")
@@ -53,31 +78,66 @@ class YoloTrack(VideoStreamTrack):
         return new_frame
 
 
+# ==============================
+# 🛰 WebSocket Endpoint
+# ==============================
 @app.websocket("/Lumen-ws")
 async def websocket_endpoint(websocket: WebSocket):
+    """
+    Main WebRTC + WebSocket endpoint for real-time video streaming inference.
+    """
     await websocket.accept()
+    print("🔌 Client connected to /Lumen-ws")
 
-    # Receive SDP offer
-    data = await websocket.receive_text()
-    msg = json.loads(data)
+    try:
+        # Receive SDP offer
+        data = await websocket.receive_text()
+        msg = json.loads(data)
 
-    pc = RTCPeerConnection()
+        # Create PeerConnection
+        pc = RTCPeerConnection()
+        metadata_channel = None
 
-    @pc.on("track")
-    def on_track(track):
-        if track.kind == "video":
-            pc.addTrack(YoloTrack(track))
+        # Create optional DataChannel for threat metadata
+        @pc.on("datachannel")
+        def on_datachannel(channel):
+            nonlocal metadata_channel
+            metadata_channel = channel
+            print(f"📡 Data channel established: {channel.label}")
 
-    # Set remote description
-    offer = RTCSessionDescription(sdp=msg["sdp"], type=msg["type"])
-    await pc.setRemoteDescription(offer)
+        # Attach our Lumen inference stream
+        @pc.on("track")
+        def on_track(track):
+            if track.kind == "video":
+                print("🎥 Incoming video track connected.")
+                lumen_track = LumenTrack(track, pc, metadata_channel)
+                pc.addTrack(lumen_track)
 
-    # Create and send answer
-    answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
+        # Set remote description (offer from client)
+        offer = RTCSessionDescription(sdp=msg["sdp"], type=msg["type"])
+        await pc.setRemoteDescription(offer)
 
-    await websocket.send_text(json.dumps({
-        "sdp": pc.localDescription.sdp,
-        "type": pc.localDescription.type
-    }))
+        # Create and send answer (return SDP back to client)
+        answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
 
+        await websocket.send_text(json.dumps({
+            "sdp": pc.localDescription.sdp,
+            "type": pc.localDescription.type
+        }))
+
+        print("✅ WebRTC negotiation completed.")
+
+    except Exception as e:
+        print(f"❌ Error in WebSocket session: {e}")
+    finally:
+        print("🔴 Client disconnected.")
+        await websocket.close()
+
+
+# ==============================
+# 🧠 Run via Uvicorn
+# ==============================
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("websocket_server:app", host="0.0.0.0", port=8000, reload=True)

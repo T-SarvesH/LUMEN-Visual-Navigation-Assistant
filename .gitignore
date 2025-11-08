@@ -109,3 +109,6 @@ htmlcov/
 */EfficientNet-Router-Model/Dataset
 
 */EfficientNet-Router-Model/trained_models/*
+
+#Exclude all video testing files as they are too large in size
+*.mp4
