@@ -1,5 +1,7 @@
 import os
 import cv2
+import json
+import time
 import numpy as np
 from ultralytics import YOLO
 from .router import RouterModel
@@ -9,57 +11,65 @@ from .threat_detection import ThreatAnalyzer
 
 class InferenceManager:
     """
-    Central pipeline managing:
-    - Router classification (EfficientNet)
-    - YOLO object detection (class-specific)
-    - Threat analysis (trajectory + motion)
+    Router → YOLO → Threat Analyzer pipeline
+    + Scene description (15-sec window)
+    + Threat JSON writer
     """
 
     def __init__(self):
-        print("🧠 Initializing Router + YOLO Inference Pipeline...")
+        print("Initializing Router + YOLO Inference Pipeline...")
         self.router = RouterModel()
         self.threat_analyzer = ThreatAnalyzer()
+
         self.frame_count = 0
         self.active_classes = []
         self.yolo_models = {}
-        print("✅ Inference Manager Ready.")
 
-    # ------------------------------
-    # 1️⃣ Lazy-load YOLO models
-    # ------------------------------
+        # -----------------------------
+        # Scene Description Aggregation
+        # -----------------------------
+        self.scene_objects = {}         # class_name → track info
+        self.window_frames = 0          # counter for 15s window
+        self.fps_estimate = 30          # used to approximate 15s
+        self.window_size = self.fps_estimate * 15
+
+        print("Inference Manager Ready.")
+
+    # --------------------------------------
+    # Lazy-load YOLO model for a class
+    # --------------------------------------
     def load_yolo_model(self, category):
-        """Load YOLO model only when required."""
         if category not in self.yolo_models:
             if category not in YOLO_MODELS:
-                print(f"⚠️ No YOLO model mapped for class: {category}")
-                return None
-            model_path = YOLO_MODELS[category]
-            if not os.path.exists(model_path):
-                print(f"❌ YOLO model path not found: {model_path}")
+                print(f"No YOLO model mapped for class: {category}")
                 return None
 
-            print(f"📦 Loading YOLO model for '{category}' from {model_path} ...")
+            model_path = YOLO_MODELS[category]
+            if not os.path.exists(model_path):
+                print(f"YOLO model path not found: {model_path}")
+                return None
+
+            print(f"Loading YOLO model for '{category}' from {model_path} ...")
             self.yolo_models[category] = YOLO(model_path).to(TORCH_DEVICE)
 
         return self.yolo_models[category]
 
-    # ------------------------------
-    # 2️⃣ Run router periodically
-    # ------------------------------
+    # --------------------------------------
+    # Run router every N frames
+    # --------------------------------------
     def run_router(self, frame):
-        """Run EfficientNet router every N frames."""
         if self.frame_count % ROUTER_INTERVAL == 0:
             router_out = self.router.predict(frame)
             self.active_classes = router_out["active_classes"]
             self.router_probs = router_out["probabilities"]
-            print(f"🎯 Active Classes: {self.active_classes}")
+            print(f"Active Classes: {self.active_classes}")
+
         self.frame_count += 1
 
-    # ------------------------------
-    # 3️⃣ YOLO inference
-    # ------------------------------
+    # --------------------------------------
+    # YOLO inference
+    # --------------------------------------
     def run_yolo_inference(self, frame):
-        """Run YOLO on active classes, gather detections."""
         annotated_frame = frame.copy()
         detections = []
 
@@ -76,42 +86,96 @@ class InferenceManager:
                 conf = float(box.conf[0])
                 class_id = int(box.cls[0])
                 cls_name = model.names[class_id]
+
                 detections.append({
-                    "class_id": class_id,
                     "class": cls_name,
+                    "class_id": class_id,
                     "conf": conf,
                     "xyxy": xyxy
                 })
 
         return annotated_frame, detections
 
-    # ------------------------------
-    # 4️⃣ Threat Analysis
-    # ------------------------------
+    # --------------------------------------
+    # Threat Analysis
+    # --------------------------------------
     def run_threat_analysis(self, annotated_frame, detections):
-        """Pass YOLO detections to ThreatAnalyzer."""
         threat_frame, threat_data = self.threat_analyzer.analyze(annotated_frame, detections)
+
+        # Write threat JSON immediately
+        self.write_threat_json(threat_data)
+
         return threat_frame, threat_data
 
-    # ------------------------------
-    # 5️⃣ Full frame pipeline
-    # ------------------------------
+    # ============================================================
+    # Scene description aggregation (15-second rolling window)
+    # ============================================================
+    def update_scene_description(self, detections, threat_data):
+        """
+        Scene description uses ONLY tracker IDs and tracker bboxes.
+        YOLO bbox matching is NOT used.
+        """
+        ts = time.time()
+
+        # Add/update tracker-derived objects
+        for tid, tdata in threat_data.items():
+            cls = tdata["object"]
+            bbox = tdata["bbox-coords"]
+            conf = tdata["confidence"]
+
+            if cls not in self.scene_objects:
+                self.scene_objects[cls] = {"track_ids": {}}
+
+            self.scene_objects[cls]["track_ids"][str(tid)] = {
+                "bbox": bbox,
+                "conf": conf,
+                "last_seen": ts
+            }
+
+        # Remove stale items older than 15 seconds
+        expire_ts = ts - 15
+
+        for cls in list(self.scene_objects.keys()):
+            for tid in list(self.scene_objects[cls]["track_ids"].keys()):
+                if self.scene_objects[cls]["track_ids"][tid]["last_seen"] < expire_ts:
+                    del self.scene_objects[cls]["track_ids"][tid]
+
+            if len(self.scene_objects[cls]["track_ids"]) == 0:
+                del self.scene_objects[cls]
+
+        # Write JSON every window
+        self.window_frames += 1
+        if self.window_frames >= self.window_size:
+            self.write_scene_json()
+            self.window_frames = 0
+
+
+    # --------------------------------------
+    # JSON Writers
+    # --------------------------------------
+    def write_scene_json(self):
+        path = os.path.join(os.path.dirname(__file__), "scene_description.json")
+        with open(path, "w") as f:
+            json.dump(self.scene_objects, f, indent=4)
+
+    def write_threat_json(self, threat_data):
+        path = os.path.join(os.path.dirname(__file__), "threats.json")
+        with open(path, "w") as f:
+            json.dump(threat_data, f, indent=4)
+
+    # --------------------------------------
+    # Full frame pipeline
+    # --------------------------------------
     def process_frame(self, frame, return_info=False):
-        """
-        Runs the router → YOLO(s) → threat analysis in sequence.
-        If return_info=True, also returns router probabilities, active classes,
-        detections, and threat data.
-        """
-        # Step 1: Router
         self.run_router(frame)
 
-        # Step 2: YOLO inference
         annotated, detections = self.run_yolo_inference(frame)
 
-        # Step 3: Threat detection overlay
         threat_annotated, threat_data = self.run_threat_analysis(annotated, detections)
 
-        # Step 4: Resize output for consistency
+        # Scene JSON update (15s window)
+        self.update_scene_description(detections, threat_data)
+
         h, w = frame.shape[:2]
         final_frame = cv2.resize(threat_annotated, (w, h))
 
@@ -121,46 +185,28 @@ class InferenceManager:
         else:
             return final_frame
 
-
 # =====================================================
 # 🎬 Standalone VIDEO inference test (Router + YOLO + Threat Analysis)
 # =====================================================
 if __name__ == "__main__":
-    from models_pipeline.router import RouterModel
-    from models_pipeline.config import BASE_MODELS_DIR
-
     print("__ Running standalone VIDEO inference test...")
-    print("__ Initializing Router + YOLO + Threat Analyzer Pipeline...")
-
     manager = InferenceManager()
 
-    # ==============================
-    # 📹 Load fixed test video
-    # ==============================
-    video_path = os.path.join(os.path.dirname(__file__), "Inference_Testing.mp4")
+    # Load video
+    video_path = os.path.join(os.path.dirname(__file__), "TestingVid(Trimmed).mp4")
     if not os.path.exists(video_path):
-        raise FileNotFoundError(
-            f"❌ Test video not found at {video_path}\n"
-            f"Please place your test video as 'Inference_Testing.mp4' inside this directory.\n"
-        )
+        raise FileNotFoundError(f"❌ Video not found: {video_path}")
 
     cap = cv2.VideoCapture(video_path)
     fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    print(f"__ Loaded video: {video_path}")
-    print(f"__ Resolution: {width}x{height}, FPS: {fps}\n")
-
-    # ==============================
-    # 🎞 Output Setup
-    # ==============================
-    output_path = f"{os.path.dirname(__file__)}/Inference_Testing_Annotated.mp4"
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    output_path = f"{os.path.dirname(__file__)}/TestingVid_Annotated.mp4"
+    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
 
     frame_count = 0
-    print("__ Processing video (press Ctrl+C to stop early)...\n")
+    print("__ Processing video ...\n")
 
     try:
         while True:
@@ -168,55 +214,41 @@ if __name__ == "__main__":
             if not ret:
                 break
 
-            # Full inference pipeline (with all info)
             annotated, router_probs, active_classes, detections, threat_data = manager.process_frame(
                 frame, return_info=True
             )
 
-            # ==============================
-            # 🔍 Logs
-            # ==============================
-            print(f"\n🟢 Frame {frame_count + 1}")
-            print("Router Probabilities:")
-            for cls_name, prob in router_probs.items():
-                print(f"  - {cls_name:<24}: {prob:.4f}")
+            print(f"\n🟢 Frame {frame_count+1}")
 
-            print(f"Active YOLO Models: {active_classes if active_classes else 'None'}")
+            print("Router Probabilities:")
+            for cls, prob in router_probs.items():
+                print(f"  - {cls:<24}: {prob:.4f}")
+
+            print(f"Active YOLO Models: {active_classes}")
 
             if detections:
                 print("\nDetected Objects:")
                 for det in detections:
-                    cls = det["class"]
-                    conf = det["conf"]
-                    xyxy = list(map(int, det["xyxy"]))
-                    print(f"  • {cls:<15} (conf: {conf:.2f}) at {xyxy}")
+                    print(f"  • {det['class']:<15} (conf {det['conf']:.2f}) at {list(map(int, det['xyxy']))}")
             else:
                 print("No objects detected.")
 
-            # Print Threat Scores
             if threat_data:
                 print("\n⚠️ Threat Scores:")
-                top_threats = sorted(threat_data.items(), key=lambda x: x[1]["threat_score"], reverse=True)[:3]
-                for tid, data in top_threats:
-                    print(f"  ID:{tid:<4} | {data['object']:<12} | Conf:{data['confidence']:.2f} | "
-                          f"T:{data['threat_score']:.2f} | P:{data['proximity']:.2f} | "
-                          f"A:{data['anomaly']:.2f} | L:{data['looming']:.2f}")
+                sorted_threats = sorted(threat_data.items(), key=lambda x: x[1]["threat_score"], reverse=True)
+                for tid, t in sorted_threats[:]:
+                    print(f"  ID:{tid:<3} | {t['object']:<10} | Conf:{t['confidence']:.2f} | "
+                          f"T:{t['threat_score']:.2f} | P:{t['proximity']:.2f} | "
+                          f"A:{t['anomaly']:.2f} | L:{t['looming']:.2f} | b-coords: {t['bbox-coords']}")
             else:
-                print("No threats detected in this frame.")
+                print("No threats detected.")
 
-            # ==============================
-            # 💾 Write annotated frame
-            # ==============================
             out.write(annotated)
             frame_count += 1
-            if frame_count % 30 == 0:
-                print(f"__ Processed {frame_count} frames...")
-
-        cap.release()
-        out.release()
-        print(f"\n✅ Annotated video saved at: {output_path}")
 
     except KeyboardInterrupt:
-        cap.release()
-        out.release()
-        print("\n⏹ Interrupted by user. Video processing stopped.")
+        pass
+
+    cap.release()
+    out.release()
+    print(f"\n✅ Saved annotated video at: {output_path}")

@@ -14,6 +14,7 @@ class ThreatAnalyzer:
         print("🧠 Initializing Threat Analyzer...")
 
         models_path = os.path.join(os.path.dirname(__file__), "threat_detection_models")
+
         # --- Device ---
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -32,7 +33,7 @@ class ThreatAnalyzer:
         # --- Thresholds ---
         self.ANOMALY_THRESHOLD = 15.0
         self.LOOMING_THRESHOLD = 1.15
-        self.THREAT_VIEW_ANGLE = 210  # Semi-spherical FoV
+        self.THREAT_VIEW_ANGLE = 210
         self.DANGER_ZONE_RADIUS_PERCENT = 0.25
 
         # --- Tracker ---
@@ -42,30 +43,33 @@ class ThreatAnalyzer:
             half=True
         )
 
-        # --- LSTM model for trajectory prediction ---
+        # --- LSTM Model ---
         class Seq2SeqLSTM(nn.Module):
             def __init__(self, input_size, hidden_size, num_layers, output_seq_len):
                 super().__init__()
                 self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
                 self.linear = nn.Linear(hidden_size, output_seq_len * 2)
                 self.output_seq_len = output_seq_len
+
             def forward(self, x):
                 _, (hidden, _) = self.lstm(x)
-                last_layer_hidden_state = hidden[-1]
-                out = self.linear(last_layer_hidden_state)
-                out = out.view(-1, self.output_seq_len, 2)
-                return out
+                out = self.linear(hidden[-1])
+                return out.view(-1, self.output_seq_len, 2)
 
+        # Load prediction model
         self.prediction_model = Seq2SeqLSTM(
             self.INPUT_SIZE, self.HIDDEN_SIZE, self.NUM_LAYERS, self.FUTURE_LEN
         ).to(self.device)
-        self.prediction_model.load_state_dict(torch.load(f"{models_path}/trajectory_model.pth", map_location=self.device))
+
+        self.prediction_model.load_state_dict(
+            torch.load(f"{models_path}/trajectory_model.pth", map_location=self.device)
+        )
         self.prediction_model.eval()
 
-        # --- Scaler ---
+        # Scaler
         self.scaler = joblib.load(f"{models_path}/scaler.gz")
 
-        # --- Histories ---
+        # Histories
         self.track_histories = {}
         self.track_predictions = {}
         self.track_anomalies = {}
@@ -74,9 +78,9 @@ class ThreatAnalyzer:
         self.initialized = False
         print("✅ Threat Analyzer Ready.")
 
-    # ------------------------------------------------
-    # ⚙️ Initialize frame-dependent parameters
-    # ------------------------------------------------
+    # -----------------------------------------------
+    # Initialize geometry (once)
+    # -----------------------------------------------
     def _init_geometry(self, frame):
         if not self.initialized:
             h, w = frame.shape[:2]
@@ -84,158 +88,162 @@ class ThreatAnalyzer:
             self.DANGER_ZONE_RADIUS = int(w * self.DANGER_ZONE_RADIUS_PERCENT)
             self.initialized = True
 
-    # ------------------------------------------------
-    # 🚨 Analyze Threats on Annotated Frame
-    # ------------------------------------------------
+    # -----------------------------------------------
+    # Main Threat Analysis Function
+    # -----------------------------------------------
     def analyze(self, annotated_frame, detections):
         self._init_geometry(annotated_frame)
 
         frame = annotated_frame.copy()
-        current_track_ids = set()
+
+        # Convert YOLO detections → numpy for tracker
         detections_np = np.array([
-            [*det["xyxy"], det["conf"], det.get("class_id", 0)]
+            [*det["xyxy"], det["conf"], det["class_id"]]
             for det in detections
         ]) if detections else np.empty((0, 6))
 
-        # ✅ Safety check before calling DeepOcSort
+        # If no detections → skip
         if detections_np.shape[0] == 0:
-            # No detections → skip tracker update
             return frame, {}
+
+        # Tracker update (safe)
         try:
             tracks = self.tracker.update(detections_np, frame)
-        except cv2.error as e:
-            print(f"⚠️ [ThreatAnalyzer] Optical flow tracking failed this frame: {str(e)}")
+        except:
             return frame, {}
+
         threat_data = {}
 
-        if tracks.shape[0] > 0:
-            for track in tracks:
-                x1, y1, x2, y2, track_id, conf, cls = track[:7]
-                track_id = int(track_id)
-                current_track_ids.add(track_id)
-                area = (x2 - x1) * (y2 - y1)
+        # Build a lookup table: class_id → class_name
+        # Example:
+        # {0: "person", 2:"car"}
+        class_lookup = {det["class_id"]: det["class"] for det in detections}
 
-                if track_id not in self.track_area_histories:
-                    self.track_area_histories[track_id] = deque(maxlen=self.HISTORY_LEN)
-                self.track_area_histories[track_id].append(area)
+        # -----------------------------------
+        # Iterate over tracked objects
+        # -----------------------------------
+        for track in tracks:
+            x1, y1, x2, y2, track_id, conf, class_id = track[:7]
+            track_id = int(track_id)
+            class_id = int(class_id)
 
-                x_center, y_center = (x1 + x2) / 2, (y1 + y2) / 2
-                if track_id not in self.track_histories:
-                    self.track_histories[track_id] = deque(maxlen=self.HISTORY_LEN)
-                self.track_histories[track_id].append((x_center, y_center))
+            cls_name = class_lookup.get(class_id, "Unknown")
 
-                # --- Threat computation (same logic as before) ---
-                proximity_score, anomaly_score, looming_score = 0.0, 0.0, 0.0
+            # ----------- Update movement histories -----------
+            area = (x2 - x1) * (y2 - y1)
+            if track_id not in self.track_area_histories:
+                self.track_area_histories[track_id] = deque(maxlen=self.HISTORY_LEN)
+            self.track_area_histories[track_id].append(area)
 
-                if len(self.track_histories[track_id]) == self.HISTORY_LEN:
-                    hist_np = np.array(self.track_histories[track_id])
-                    hist_deltas = np.diff(hist_np, axis=0)
-                    scaled = self.scaler.transform(hist_deltas)
-                    padded = np.vstack([np.zeros((1, 2)), scaled])
-                    hist_tensor = torch.from_numpy(padded).float().unsqueeze(0).to(self.device)
+            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+            if track_id not in self.track_histories:
+                self.track_histories[track_id] = deque(maxlen=self.HISTORY_LEN)
+            self.track_histories[track_id].append((cx, cy))
 
-                    with torch.no_grad():
-                        pred_deltas_tensor = self.prediction_model(hist_tensor)
-                        pred_scaled = pred_deltas_tensor.squeeze(0).cpu().numpy()
-                        pred_deltas = self.scaler.inverse_transform(pred_scaled)
+            # Not enough history → skip threat estimation
+            if len(self.track_histories[track_id]) < self.HISTORY_LEN:
+                continue
 
-                    predicted_path = np.zeros_like(pred_deltas)
-                    current_pos = hist_np[-1]
-                    for i in range(len(pred_deltas)):
-                        current_pos = current_pos + pred_deltas[i]
-                        predicted_path[i] = current_pos
-                    self.track_predictions[track_id] = predicted_path
+            # ------------ Motion Prediction ------------
+            hist_np = np.array(self.track_histories[track_id])
+            deltas = np.diff(hist_np, axis=0)
+            scaled = self.scaler.transform(deltas)
+            padded = np.vstack([np.zeros((1, 2)), scaled])
+            tensor = torch.from_numpy(padded).float().unsqueeze(0).to(self.device)
 
-                    if len(self.track_area_histories[track_id]) == self.HISTORY_LEN:
-                        areas = np.array(self.track_area_histories[track_id])
-                        if np.mean(areas[self.HISTORY_LEN//2:]) > np.mean(areas[:self.HISTORY_LEN//2]) * self.LOOMING_THRESHOLD:
-                            looming_score = 1.0
+            with torch.no_grad():
+                pred_scaled = self.prediction_model(tensor).squeeze(0).cpu().numpy()
+                pred_deltas = self.scaler.inverse_transform(pred_scaled)
 
-                    if track_id in self.track_anomalies and 'prev_pred' in self.track_anomalies[track_id]:
-                        prev_pred = self.track_anomalies[track_id]['prev_pred'][0]
-                        actual = np.array([x_center, y_center])
-                        error = np.linalg.norm(actual - prev_pred)
-                        anomaly_score = min(error / self.ANOMALY_THRESHOLD, 1.0)
-                        self.track_anomalies[track_id]['error'] = error
+            predicted_path = np.zeros_like(pred_deltas)
+            cur = hist_np[-1]
+            for i in range(len(pred_deltas)):
+                cur = cur + pred_deltas[i]
+                predicted_path[i] = cur
 
-                    if track_id not in self.track_anomalies:
-                        self.track_anomalies[track_id] = {}
-                    self.track_anomalies[track_id]['prev_pred'] = predicted_path
+            self.track_predictions[track_id] = predicted_path
 
-                    for point in predicted_path.astype(int):
-                        dx = point[0] - self.DANGER_ZONE_CENTER[0]
-                        dy = self.DANGER_ZONE_CENTER[1] - point[1]
-                        distance = np.sqrt(dx**2 + dy**2)
-                        angle = np.degrees(np.arctan2(dx, dy))
-                        if distance < self.DANGER_ZONE_RADIUS and abs(angle) < (self.THREAT_VIEW_ANGLE / 2):
-                            proximity_score = 1.0
-                            break
+            # ------------ Anomaly Score ------------
+            anomaly_score = 0.0
+            if track_id in self.track_anomalies and "prev_pred" in self.track_anomalies[track_id]:
+                prev_pos = self.track_anomalies[track_id]["prev_pred"][0]
+                actual = np.array([cx, cy])
+                error = np.linalg.norm(actual - prev_pos)
+                anomaly_score = min(error / self.ANOMALY_THRESHOLD, 1.0)
 
-                    threat_score = (
-                        proximity_score * self.PROXIMITY_WEIGHT +
-                        anomaly_score * self.ANOMALY_WEIGHT +
-                        looming_score * self.LOOMING_WEIGHT
-                    )
+            if track_id not in self.track_anomalies:
+                self.track_anomalies[track_id] = {}
+            self.track_anomalies[track_id]["prev_pred"] = predicted_path
 
-                    # Color-code the existing YOLO bbox (no new boxes)
-                    color = (0, 255, 0)
-                    if threat_score > 0.7:
-                        color = (0, 0, 255)
-                    elif threat_score > 0.4:
-                        color = (0, 165, 255)
+            # ------------ Looming Score ------------
+            looming_score = 0.0
+            if len(self.track_area_histories[track_id]) == self.HISTORY_LEN:
+                areas = np.array(self.track_area_histories[track_id])
+                if np.mean(areas[4:]) > np.mean(areas[:4]) * self.LOOMING_THRESHOLD:
+                    looming_score = 1.0
 
-                    cls_name = str(int(cls))
-                    label_text = f"{cls_name} | Conf:{conf:.2f} | T:{threat_score:.2f}"
-                    cv2.putText(frame, label_text, (int(x1), int(y1) - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            # ------------ Proximity Score ------------
+            proximity_score = 0.0
+            for point in predicted_path.astype(int):
+                dx = point[0] - self.DANGER_ZONE_CENTER[0]
+                dy = self.DANGER_ZONE_CENTER[1] - point[1]
+                distance = np.sqrt(dx**2 + dy**2)
+                angle = np.degrees(np.arctan2(dx, dy))
+                if distance < self.DANGER_ZONE_RADIUS and abs(angle) < self.THREAT_VIEW_ANGLE / 2:
+                    proximity_score = 1.0
+                    break
 
-                    # Apply thicker border color overlay to YOLO bbox
-                    cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 3)
+            # ------------ Final Weighted Threat Score ------------
+            threat_score = (
+                0.5 * proximity_score +
+                0.3 * anomaly_score +
+                0.2 * looming_score
+            )
 
-                    threat_data[track_id] = {
-                        "object": cls_name,
-                        "confidence": float(conf),
-                        "threat_score": threat_score,
-                        "proximity": proximity_score,
-                        "anomaly": anomaly_score,
-                        "looming": looming_score
-                    }
+            # ------------ Draw Overlays ------------
+            color = (0, 255, 0)
+            if threat_score > 0.7:
+                color = (0, 0, 255)
+            elif threat_score > 0.4:
+                color = (0, 165, 255)
 
-        # --- Draw improved semi-spherical safety zone ---
+            # Overlay label
+            text = f"{cls_name} | Conf:{conf:.2f} | T:{threat_score:.2f}"
+            cv2.putText(frame, text, (int(x1), int(y1) - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+
+            # Re-color YOLO box
+            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)),
+                          color, 3)
+
+            # Save output dictionary
+            threat_data[track_id] = {
+                "object": cls_name,
+                "confidence": float(conf),
+                "threat_score": float(threat_score),
+                "proximity": float(proximity_score),
+                "anomaly": float(anomaly_score),
+                "looming": float(looming_score),
+                "bbox-coords": [int(x1), int(y1), int(x2), int(y2)]
+            }
+
+        # ------------ Draw Safety Zone Overlay ------------
         overlay = frame.copy()
-
         h, w = frame.shape[:2]
 
-        # ✅ Center slightly below bottom edge for full curvature
-        zone_center = (w // 2, int(h * 1.02))  # 2% below bottom edge
-        adaptive_radius = int(w * 0.38)        # slightly wider horizontally
-        ellipse_height = int(adaptive_radius * 0.42)  # balanced curvature
+        zone_center = (w // 2, int(h * 1.02))
+        radius = int(w * 0.38)
+        height = int(radius * 0.42)
 
-        # ✅ Draw filled semi-transparent magenta arc (240° span)
         cv2.ellipse(
-            overlay,
-            zone_center,
-            (adaptive_radius, ellipse_height),
-            0,
-            -120,  # start angle
-            120,   # end angle
-            (255, 0, 255),
-            -1
+            overlay, zone_center, (radius, height),
+            0, -120, 120, (255, 0, 255), -1
         )
-
-        # ✅ Blend with transparency for smooth overlay
         frame = cv2.addWeighted(overlay, 0.28, frame, 0.72, 0)
 
-        # ✅ Draw a clean magenta outline for definition
         cv2.ellipse(
-            frame,
-            zone_center,
-            (adaptive_radius, ellipse_height),
-            0,
-            -120,
-            120,
-            (255, 0, 255),
-            3
+            frame, zone_center, (radius, height),
+            0, -120, 120, (255, 0, 255), 3
         )
 
         return frame, threat_data
