@@ -1,16 +1,30 @@
 {
-    "2071": {
-        "object": "auto",
-        "confidence": 0.35306093096733093,
-        "threat_score": 0.4773458806950028,
+    "292": {
+        "object": "person",
+        "confidence": 0.4378340542316437,
+        "threat_score": 0.2,
         "proximity": 0.0,
-        "anomaly": 0.9244862689833426,
+        "anomaly": 0.0,
         "looming": 1.0,
         "bbox-coords": [
-            329,
-            266,
-            555,
-            545
+            673,
+            322,
+            710,
+            447
+        ]
+    },
+    "290": {
+        "object": "person",
+        "confidence": 0.7995725274085999,
+        "threat_score": 0.48297855749688445,
+        "proximity": 0.0,
+        "anomaly": 0.9432618583229482,
+        "looming": 1.0,
+        "bbox-coords": [
+            621,
+            306,
+            698,
+            449
         ]
     }
 }

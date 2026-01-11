@@ -1,0 +1,5 @@
+[00:20] A large crowd of people and several cars are directly in your path. More pedestrians and vehicles are moving along the sides, including a motorcycle to your left and a truck in the distance on your right.
+[00:40] A crowd of people and a vehicle are directly ahead in your path. Several cars and a bus are also present in the surrounding area.
+[01:00] A crowd of people, several cars, and a bus are directly ahead, blocking your path. A truck and more vehicles are also present on your left and right.
+[01:20] A crowd of people is directly ahead, obstructing your path in the center. You are also surrounded by several cars and more people to your left and right.
+[01:40] A large group of people, several cars, a motorcycle, and a bus are directly ahead in your path. More pedestrians and vehicles are positioned along the left and right sides of the street.

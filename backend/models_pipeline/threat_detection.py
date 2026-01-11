@@ -227,23 +227,50 @@ class ThreatAnalyzer:
                 "bbox-coords": [int(x1), int(y1), int(x2), int(y2)]
             }
 
-        # ------------ Draw Safety Zone Overlay ------------
+        # ===============================
+        # Forward Safety ROI (POV-aligned)
+        # ===============================
         overlay = frame.copy()
         h, w = frame.shape[:2]
 
-        zone_center = (w // 2, int(h * 1.02))
-        radius = int(w * 0.38)
-        height = int(radius * 0.42)
+        # --- Center anchored just INSIDE bottom edge (prevents cutoff) ---
+        zone_center = (w // 2, h - 2)
 
+        # --- Axis tuning (85% bottom alignment, flatter depth) ---
+        major_axis = int(w * 0.45)     # ~85% total width coverage
+        minor_axis = int(h * 0.2)      # controlled vertical depth
+
+        # --- Light cyan (true light cyan in BGR) ---
+        ROI_COLOR = (255, 255, 200)     # light cyan
+        ALPHA = 0.22
+
+        # --- Filled upper-half ellipse (forward-only ROI) ---
         cv2.ellipse(
-            overlay, zone_center, (radius, height),
-            0, -120, 120, (255, 0, 255), -1
+            overlay,
+            zone_center,
+            (major_axis, minor_axis),
+            angle=0,
+            startAngle=180,
+            endAngle=360,
+            color=ROI_COLOR,
+            thickness=-1,
+            lineType=cv2.LINE_AA
         )
-        frame = cv2.addWeighted(overlay, 0.28, frame, 0.72, 0)
 
+        # --- Blend overlay smoothly ---
+        frame = cv2.addWeighted(overlay, ALPHA, frame, 1 - ALPHA, 0)
+
+        # --- Clean anti-aliased outline ---
         cv2.ellipse(
-            frame, zone_center, (radius, height),
-            0, -120, 120, (255, 0, 255), 3
+            frame,
+            zone_center,
+            (major_axis, minor_axis),
+            angle=0,
+            startAngle=180,
+            endAngle=360,
+            color=ROI_COLOR,
+            thickness=2,
+            lineType=cv2.LINE_AA
         )
 
         return frame, threat_data

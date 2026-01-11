@@ -7,7 +7,12 @@ from ultralytics import YOLO
 from .router import RouterModel
 from .config import YOLO_MODELS, YOLO_CONF, YOLO_IMGSZ, ROUTER_INTERVAL, TORCH_DEVICE
 from .threat_detection import ThreatAnalyzer
+from Scene_Description_Module.narrator import NarratorBot
+from dotenv import load_dotenv
+import time
+import threading
 
+load_dotenv()
 
 class InferenceManager:
     """
@@ -20,7 +25,7 @@ class InferenceManager:
         print("Initializing Router + YOLO Inference Pipeline...")
         self.router = RouterModel()
         self.threat_analyzer = ThreatAnalyzer()
-
+        self.narrator = NarratorBot()
         self.frame_count = 0
         self.active_classes = []
         self.yolo_models = {}
@@ -31,7 +36,7 @@ class InferenceManager:
         self.scene_objects = {}         # class_name → track info
         self.window_frames = 0          # counter for 15s window
         self.fps_estimate = 30          # used to approximate 15s
-        self.window_size = self.fps_estimate * 15
+        self.window_size = self.fps_estimate * 30
 
         print("Inference Manager Ready.")
 
@@ -147,9 +152,45 @@ class InferenceManager:
         self.window_frames += 1
         if self.window_frames >= self.window_size:
             self.write_scene_json()
+
+            current_seconds = self.frame_count / self.fps_estimate
+            mins = int(current_seconds // 60)
+            secs = int(current_seconds % 60)
+            timestamp_str = f"{mins:02d}:{secs:02d}"
+
+            print(f"⏳ Generating Narration at Video Time: {timestamp_str} ...")
+            print(f"⏳ Triggering Async Narration for {timestamp_str}...")
+
+            scene_snapshot = json.loads(json.dumps(self.scene_objects))
+            thread =  threading.Thread(
+
+                target=self.run_async_narration,
+                args=(scene_snapshot, timestamp_str),
+                daemon=True
+            )
+
+            thread.start()
+                
             self.window_frames = 0
-
-
+    
+    def run_async_narration(self, scene_data, timestamp_str):
+        try:
+            narration = self.narrator.generate_narration(scene_data)
+            
+            if narration:
+                print(f"Narration is: {narration}")
+                log_entry = f"[{timestamp_str}] {narration}"
+                
+                # Print to console (Thread-safe-ish for simple prints)
+                print(f"\n🗣️ LUMEN [{timestamp_str}]: {narration}\n")
+                
+                # Write to file
+                log_path = os.path.join(os.path.dirname(__file__), "narrations_log2.txt")
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(log_entry + "\n")
+                    
+        except Exception as e:
+            print(f"Async Narrator Failed: {e}")
     # --------------------------------------
     # JSON Writers
     # --------------------------------------
@@ -199,11 +240,11 @@ if __name__ == "__main__":
 
     cap = cv2.VideoCapture(video_path)
     fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    #width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    #height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    output_path = f"{os.path.dirname(__file__)}/TestingVid_Annotated.mp4"
-    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    #output_path = f"{os.path.dirname(__file__)}/TestingVid_Annotated_and_Refined.mp4"
+    #out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
 
     frame_count = 0
     print("__ Processing video ...\n")
@@ -243,12 +284,12 @@ if __name__ == "__main__":
             else:
                 print("No threats detected.")
 
-            out.write(annotated)
+            #out.write(annotated)
             frame_count += 1
 
     except KeyboardInterrupt:
         pass
 
     cap.release()
-    out.release()
-    print(f"\n✅ Saved annotated video at: {output_path}")
+    #out.release()
+    #print(f"\n✅ Saved annotated video at: {output_path}")
