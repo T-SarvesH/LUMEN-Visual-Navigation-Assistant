@@ -1,0 +1,9 @@
+
+[00:30] There are 4 people straight ahead, and 2 more to your right.
+[01:00] A car is directly ahead, with two more in the distance ahead, and a truck far to your left.
+[01:30] A person is to your far left.
+[02:00] People are standing to your left.
+[02:30] A person is directly ahead, with two pedestrians far to your left.
+[03:00] A person is directly ahead, someone is on your left, and two people are on your right.
+[03:30] There are 2 people straight ahead, 2 to your left, and 1 to your right.
+[04:00] The path ahead is clear.
