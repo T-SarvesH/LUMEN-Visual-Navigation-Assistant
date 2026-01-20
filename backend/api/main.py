@@ -1,24 +1,18 @@
 import sys
 import os
 import json
-import cv2
 import asyncio
+import time
+from typing import Optional
+from pydantic import BaseModel, Field
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
+from models import UserState
 
-# --- Add project path ---
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-
-# --- Import LUMEN pipeline ---
-from models_pipeline.inference import InferenceManager
-
-# ==============================
-# 🌐 FASTAPI SETUP
-# ==============================
+# --- FastAPI Setup ---
 app = FastAPI(title="Lumen API")
-
 app.add_middleware(
     CORSMiddleware,
     allow_headers=["*"],
@@ -27,97 +21,88 @@ app.add_middleware(
     allow_origins=["*"],
 )
 
-# ==============================
-# ⚙️ Initialize Inference Pipeline
-# ==============================
-print("🚀 Initializing full LUMEN inference pipeline...")
+# --- Inference Setup ---
+from models_pipeline.inference import InferenceManager
 inference_manager = InferenceManager()
-print("✅ LUMEN pipeline ready for live inference.")
 
-
-# ==============================
-# 🎥 LumenTrack - Full Inference Stream
-# ==============================
 class LumenTrack(VideoStreamTrack):
-    """
-    Receives frames from incoming WebRTC video track,
-    runs full LUMEN inference (Router + YOLO + Threat Detection),
-    and returns annotated frames in real time.
-    """
     kind = "video"
 
-    def __init__(self, track, pc, metadata_channel=None):
+    def __init__(self, track, pc, user_state: UserState, metadata_channel=None):
         super().__init__()
         self.track = track
         self.pc = pc
+        self.user_state = user_state
         self.metadata_channel = metadata_channel
+        self.last_description_time = 0
 
     async def recv(self):
-        # Get next frame
         frame = await self.track.recv()
         img = frame.to_ndarray(format="bgr24")
 
-        # Run the full inference pipeline
+        # Core Inference (Real-time detection)
         annotated, router_probs, active_classes, detections, threat_data = inference_manager.process_frame(
             img, return_info=True
         )
 
-        # --- Optional metadata stream over WebRTC DataChannel ---
+        # Scenery Description logic using Pydantic validated state
+        current_time = time.time()
+        if current_time - self.last_description_time >= self.user_state.description_interval:
+            self.last_description_time = current_time
+            # Trigger TTS logic using self.user_state.speech_language
+            print(f"Narrator [{self.user_state.speech_language}]: Describing scene...")
+
+        # Metadata output
         if self.metadata_channel and self.metadata_channel.readyState == "open":
             payload = json.dumps({
                 "router_probs": router_probs,
-                "active_classes": active_classes,
-                "detections": detections,
-                "threat_data": threat_data
+                "threat_data": threat_data,
+                "settings_active": self.user_state.dict()
             })
             asyncio.ensure_future(self.metadata_channel.send(payload))
 
-        # Convert back to VideoFrame
         new_frame = VideoFrame.from_ndarray(annotated, format="bgr24")
         new_frame.pts, new_frame.time_base = frame.pts, frame.time_base
         return new_frame
 
-
-# ==============================
-# 🛰 WebSocket Endpoint
-# ==============================
 @app.websocket("/Lumen-ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """
-    Main WebRTC + WebSocket endpoint for real-time video streaming inference.
-    """
     await websocket.accept()
-    print("🔌 Client connected to /Lumen-ws")
+    pc = RTCPeerConnection()
+    metadata_channel = None
 
     try:
-        # Receive SDP offer
-        data = await websocket.receive_text()
-        msg = json.loads(data)
+        # 1. Receive Initial Handshake
+        raw_data = await websocket.receive_text()
+        msg = json.loads(raw_data)
 
-        # Create PeerConnection
-        pc = RTCPeerConnection()
-        metadata_channel = None
+        # 2. Validate Config with Pydantic
+        # Matches frontend: payload.config { description_interval, language }
+        try:
+            config_data = msg.get("config")
+            user_state = UserState(
+                description_interval=config_data.get("description_interval"),
+                speech_language=config_data.get("language")
+            )
+            print(f"✅ State Validated: {user_state}")
+        except Exception as ve:
+            print(f"⚠️ Validation Error: {ve}")
+            # Fallback to defaults if validation fails
+            user_state = UserState(description_interval=15, speech_language="English")
 
-        # Create optional DataChannel for threat metadata
         @pc.on("datachannel")
         def on_datachannel(channel):
             nonlocal metadata_channel
             metadata_channel = channel
-            print(f"📡 Data channel established: {channel.label}")
 
-        # Attach our Lumen inference stream
         @pc.on("track")
         def on_track(track):
             if track.kind == "video":
-                print("🎥 Incoming video track connected.")
-                lumen_track = LumenTrack(track, pc, metadata_channel)
-                pc.addTrack(lumen_track)
+                pc.addTrack(LumenTrack(track, pc, user_state, metadata_channel))
 
-        # Set remote description (offer from client)
+        # 3. WebRTC Negotiation
         offer = RTCSessionDescription(sdp=msg["sdp"], type=msg["type"])
         await pc.setRemoteDescription(offer)
-
-        # Create and send answer (return SDP back to client)
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
 
@@ -126,18 +111,11 @@ async def websocket_endpoint(websocket: WebSocket):
             "type": pc.localDescription.type
         }))
 
-        print("✅ WebRTC negotiation completed.")
+        while True:
+            await asyncio.sleep(3600)
 
     except Exception as e:
-        print(f"❌ Error in WebSocket session: {e}")
+        print(f"❌ Session Error: {e}")
     finally:
-        print("🔴 Client disconnected.")
-        await websocket.close()
-
-
-# ==============================
-# 🧠 Run via Uvicorn
-# ==============================
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("websocket_server:app", host="0.0.0.0", port=8000, reload=True)
+        await pc.close()
+        print("🔌 Session Closed")
