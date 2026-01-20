@@ -19,16 +19,45 @@ class ThreatAnalyzer:
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
         # --- Parameters ---
-        self.HISTORY_LEN = 8
+        self.HISTORY_LEN = 16
         self.FUTURE_LEN = 12
         self.INPUT_SIZE = 2
         self.HIDDEN_SIZE = 128
         self.NUM_LAYERS = 2
 
-        # --- Threat Weights ---
+        # --- Threat Weights (Physics Base) ---
         self.PROXIMITY_WEIGHT = 0.5
         self.ANOMALY_WEIGHT = 0.3
         self.LOOMING_WEIGHT = 0.2
+
+        # --- Class Priority Multipliers ---
+        # 1.0 is baseline. Values > 1.0 boost the threat score.
+        self.CLASS_PRIORITY_MULTIPLIERS = {
+            # Vehicles (High Mass/Velocity = High Risk)
+            "car": 1.5,
+            "truck": 1.8,
+            "bus": 1.8,
+            "train": 2.0,
+            "motorcycle": 1.5,
+            "bicycle": 1.2,
+            "scooter": 1.2,
+
+            # Environmental Hazards (Critical Priority)
+            "fire": 2.5,
+            "smoke": 2.0,
+            "pothole": 1.5,
+            "debris": 1.4,
+            "water": 1.3,
+            "mud": 1.3,
+            "rock": 1.4,
+
+            # Baseline Objects
+            "person": 1.0,
+            "dog": 0.8, # Lower weight to prevent erratic animal movement from false flagging
+            "cat": 0.8,
+            "cow": 1.0
+        }
+        self.DEFAULT_MULTIPLIER = 1.0
 
         # --- Thresholds ---
         self.ANOMALY_THRESHOLD = 15.0
@@ -37,13 +66,14 @@ class ThreatAnalyzer:
         self.DANGER_ZONE_RADIUS_PERCENT = 0.25
 
         # --- Tracker ---
+        # Ensure 'osnet_x0_25_msmt17.pt' is in your models folder
         self.tracker = DeepOcSort(
             reid_weights=Path(f"{models_path}/osnet_x0_25_msmt17.pt"),
             device=self.device,
             half=True
         )
 
-        # --- LSTM Model ---
+        # --- LSTM Model Definition ---
         class Seq2SeqLSTM(nn.Module):
             def __init__(self, input_size, hidden_size, num_layers, output_seq_len):
                 super().__init__()
@@ -56,18 +86,28 @@ class ThreatAnalyzer:
                 out = self.linear(hidden[-1])
                 return out.view(-1, self.output_seq_len, 2)
 
-        # Load prediction model
+        # Load Trajectory Prediction Model
         self.prediction_model = Seq2SeqLSTM(
             self.INPUT_SIZE, self.HIDDEN_SIZE, self.NUM_LAYERS, self.FUTURE_LEN
         ).to(self.device)
 
-        self.prediction_model.load_state_dict(
-            torch.load(f"{models_path}/trajectory_model.pth", map_location=self.device)
-        )
+        traj_model_path = f"{models_path}/trajectory_model.pth"
+        if os.path.exists(traj_model_path):
+            self.prediction_model.load_state_dict(
+                torch.load(traj_model_path, map_location=self.device)
+            )
+        else:
+            print(f"⚠️ Warning: Trajectory model not found at {traj_model_path}")
+            
         self.prediction_model.eval()
 
-        # Scaler
-        self.scaler = joblib.load(f"{models_path}/scaler.gz")
+        # Load Scaler
+        scaler_path = f"{models_path}/scaler.gz"
+        if os.path.exists(scaler_path):
+            self.scaler = joblib.load(scaler_path)
+        else:
+            print(f"⚠️ Warning: Scaler not found at {scaler_path}")
+            self.scaler = None
 
         # Histories
         self.track_histories = {}
@@ -96,37 +136,39 @@ class ThreatAnalyzer:
 
         frame = annotated_frame.copy()
 
-        # Convert YOLO detections → numpy for tracker
+        # 1. Convert YOLO detections → numpy for BoxMOT tracker
+        # [x1, y1, x2, y2, conf, class_id]
         detections_np = np.array([
             [*det["xyxy"], det["conf"], det["class_id"]]
             for det in detections
         ]) if detections else np.empty((0, 6))
 
-        # If no detections → skip
+        # If no detections → skip logic, just return frame
         if detections_np.shape[0] == 0:
             return frame, {}
 
-        # Tracker update (safe)
+        # 2. Update Tracker
         try:
             tracks = self.tracker.update(detections_np, frame)
-        except:
+        except Exception:
             return frame, {}
 
         threat_data = {}
 
-        # Build a lookup table: class_id → class_name
-        # Example:
-        # {0: "person", 2:"car"}
+        # Create a lookup for Class Names using Class IDs from the current frame's detections
+        # This handles cases where different YOLO models share ID numbers but return distinct names
         class_lookup = {det["class_id"]: det["class"] for det in detections}
 
         # -----------------------------------
         # Iterate over tracked objects
         # -----------------------------------
         for track in tracks:
+            # BoxMOT returns: [x1, y1, x2, y2, id, conf, class_id]
             x1, y1, x2, y2, track_id, conf, class_id = track[:7]
             track_id = int(track_id)
             class_id = int(class_id)
 
+            # Retrieve class name
             cls_name = class_lookup.get(class_id, "Unknown")
 
             # ----------- Update movement histories -----------
@@ -140,14 +182,17 @@ class ThreatAnalyzer:
                 self.track_histories[track_id] = deque(maxlen=self.HISTORY_LEN)
             self.track_histories[track_id].append((cx, cy))
 
-            # Not enough history → skip threat estimation
-            if len(self.track_histories[track_id]) < self.HISTORY_LEN:
+            # Not enough history or missing scaler → skip threat estimation
+            if len(self.track_histories[track_id]) < self.HISTORY_LEN or self.scaler is None:
                 continue
 
-            # ------------ Motion Prediction ------------
+            # ------------ Motion Prediction (LSTM) ------------
             hist_np = np.array(self.track_histories[track_id])
             deltas = np.diff(hist_np, axis=0)
+            
+            # Standardize inputs
             scaled = self.scaler.transform(deltas)
+            # Pad to match LSTM input requirement
             padded = np.vstack([np.zeros((1, 2)), scaled])
             tensor = torch.from_numpy(padded).float().unsqueeze(0).to(self.device)
 
@@ -193,28 +238,40 @@ class ThreatAnalyzer:
                     proximity_score = 1.0
                     break
 
-            # ------------ Final Weighted Threat Score ------------
-            threat_score = (
-                0.5 * proximity_score +
-                0.3 * anomaly_score +
-                0.2 * looming_score
+            # ------------ Calculate Physics Base Threat ------------
+            base_threat = (
+                self.PROXIMITY_WEIGHT * proximity_score +
+                self.ANOMALY_WEIGHT * anomaly_score +
+                self.LOOMING_WEIGHT * looming_score
             )
 
+            # ------------ Apply Class Priority Multiplier ------------
+            # Get multiplier based on class name (default 1.0)
+            priority_mult = self.CLASS_PRIORITY_MULTIPLIERS.get(cls_name.lower(), self.DEFAULT_MULTIPLIER)
+            
+            # Final Score = Base * Multiplier (Capped at 1.0)
+            threat_score = min(base_threat * priority_mult, 1.0)
+
             # ------------ Draw Overlays ------------
+            # Color Coding: Red (High), Orange (Med), Green (Low)
             color = (0, 255, 0)
             if threat_score > 0.7:
                 color = (0, 0, 255)
             elif threat_score > 0.4:
                 color = (0, 165, 255)
 
-            # Overlay label
-            text = f"{cls_name} | Conf:{conf:.2f} | T:{threat_score:.2f}"
+            # Draw Label
+            text = f"{cls_name} | T:{threat_score:.2f}"
             cv2.putText(frame, text, (int(x1), int(y1) - 8),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
-            # Re-color YOLO box
+            # Draw Bounding Box
             cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)),
                           color, 3)
+
+            # Draw Trajectory (Optional - can be commented out if too cluttered)
+            if len(predicted_path) > 0:
+                cv2.polylines(frame, [predicted_path.astype(np.int32)], False, color, 2)
 
             # Save output dictionary
             threat_data[track_id] = {
@@ -233,18 +290,14 @@ class ThreatAnalyzer:
         overlay = frame.copy()
         h, w = frame.shape[:2]
 
-        # --- Center anchored just INSIDE bottom edge (prevents cutoff) ---
+        # --- ROI Geometry ---
         zone_center = (w // 2, h - 2)
-
-        # --- Axis tuning (85% bottom alignment, flatter depth) ---
-        major_axis = int(w * 0.45)     # ~85% total width coverage
-        minor_axis = int(h * 0.2)      # controlled vertical depth
-
-        # --- Light cyan (true light cyan in BGR) ---
-        ROI_COLOR = (255, 255, 200)     # light cyan
+        major_axis = int(w * 0.45)
+        minor_axis = int(h * 0.2)
+        ROI_COLOR = (255, 255, 200) # Light Cyan
         ALPHA = 0.22
 
-        # --- Filled upper-half ellipse (forward-only ROI) ---
+        # --- Draw Semi-Transparent Fill ---
         cv2.ellipse(
             overlay,
             zone_center,
@@ -257,10 +310,10 @@ class ThreatAnalyzer:
             lineType=cv2.LINE_AA
         )
 
-        # --- Blend overlay smoothly ---
+        # --- Blend overlay ---
         frame = cv2.addWeighted(overlay, ALPHA, frame, 1 - ALPHA, 0)
 
-        # --- Clean anti-aliased outline ---
+        # --- Draw Outline ---
         cv2.ellipse(
             frame,
             zone_center,
