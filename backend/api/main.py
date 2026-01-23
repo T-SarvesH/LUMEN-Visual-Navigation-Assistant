@@ -1,121 +1,125 @@
-import sys
-import os
-import json
-import asyncio
-import time
-from typing import Optional
-from pydantic import BaseModel, Field
+import sys, os, json, asyncio, logging
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
-from models import UserState
+import cv2
+from .models import UserState
+from models_pipeline.inference import InferenceManager
 
-# --- FastAPI Setup ---
+# --- Optimization Setup ---
+executor = ThreadPoolExecutor(max_workers=2) # Decouples AI from WebRTC heartbeats
+logging.basicConfig(level=logging.INFO)
+
 app = FastAPI(title="Lumen API")
 app.add_middleware(
     CORSMiddleware,
-    allow_headers=["*"],
-    allow_methods=["*"],
-    allow_credentials=True,
     allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# --- Inference Setup ---
-from models_pipeline.inference import InferenceManager
 inference_manager = InferenceManager()
+active_sessions = set()
 
 class LumenTrack(VideoStreamTrack):
     kind = "video"
 
-    def __init__(self, track, pc, user_state: UserState, metadata_channel=None):
+    def __init__(self, track, pc, user_state, metadata_channel=None):
         super().__init__()
-        self.track = track
-        self.pc = pc
-        self.user_state = user_state
+        self.track, self.pc, self.user_state = track, pc, user_state
         self.metadata_channel = metadata_channel
-        self.last_description_time = 0
+        self.queue = asyncio.Queue(maxsize=1) # LIFO: Always process ONLY the latest frame
+        self.orientation = "portrait"
+
+    async def _consume_inbound(self):
+        """Continuously drains the inbound 720p stream to prevent backpressure."""
+        try:
+            while True:
+                frame = await self.track.recv()
+                # Clear queue to ensure we only keep the newest frame (No Lag)
+                while not self.queue.empty():
+                    self.queue.get_nowait()
+                await self.queue.put(frame)
+        except Exception as e:
+            print(f"DEBUG: Inbound consumption stopped: {e}")
 
     async def recv(self):
-        frame = await self.track.recv()
+        frame = await self.queue.get()
+        loop = asyncio.get_event_loop()
+        
+        try:
+            # Parallelize Inference: Don't let YOLO block the video loop
+            annotated_img, narration = await loop.run_in_executor(
+                executor, self._process_ai, frame
+            )
+
+            if narration and self.metadata_channel and self.metadata_channel.readyState == "open":
+                self.metadata_channel.send(json.dumps({
+                    "type": "narration_event",
+                    "text": narration,
+                    "language": self.user_state.speech_language
+                }))
+
+            new_frame = VideoFrame.from_ndarray(annotated_img, format="bgr24")
+            new_frame.pts, new_frame.time_base = frame.pts, frame.time_base
+            return new_frame
+        except Exception:
+            return frame
+
+    def _process_ai(self, frame):
+        """Synchronous processing: Handles rotation and YOLO inference."""
         img = frame.to_ndarray(format="bgr24")
-
-        # Core Inference (Real-time detection)
-        annotated, router_probs, active_classes, detections, threat_data = inference_manager.process_frame(
-            img, return_info=True
-        )
-
-        # Scenery Description logic using Pydantic validated state
-        current_time = time.time()
-        if current_time - self.last_description_time >= self.user_state.description_interval:
-            self.last_description_time = current_time
-            # Trigger TTS logic using self.user_state.speech_language
-            print(f"Narrator [{self.user_state.speech_language}]: Describing scene...")
-
-        # Metadata output
-        if self.metadata_channel and self.metadata_channel.readyState == "open":
-            payload = json.dumps({
-                "router_probs": router_probs,
-                "threat_data": threat_data,
-                "settings_active": self.user_state.dict()
-            })
-            asyncio.ensure_future(self.metadata_channel.send(payload))
-
-        new_frame = VideoFrame.from_ndarray(annotated, format="bgr24")
-        new_frame.pts, new_frame.time_base = frame.pts, frame.time_base
-        return new_frame
+        
+        # ✅ Handle dynamic rotation from phone
+        if self.orientation == "landscape":
+            img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+        
+        results = inference_manager.process_frame(img, return_info=True)
+        return results["annotated_frame"], results["narration"]
 
 @app.websocket("/Lumen-ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     pc = RTCPeerConnection()
-    metadata_channel = None
+    active_sessions.add(pc)
+    l_track = None
+
+    @pc.on("datachannel")
+    def on_datachannel(channel):
+        @channel.on("message")
+        def on_message(message):
+            data = json.loads(message)
+            if data["type"] == "orientation_sync" and l_track:
+                l_track.orientation = data["value"]
 
     try:
-        # 1. Receive Initial Handshake
         raw_data = await websocket.receive_text()
         msg = json.loads(raw_data)
-
-        # 2. Validate Config with Pydantic
-        # Matches frontend: payload.config { description_interval, language }
-        try:
-            config_data = msg.get("config")
-            user_state = UserState(
-                description_interval=config_data.get("description_interval"),
-                speech_language=config_data.get("language")
-            )
-            print(f"✅ State Validated: {user_state}")
-        except Exception as ve:
-            print(f"⚠️ Validation Error: {ve}")
-            # Fallback to defaults if validation fails
-            user_state = UserState(description_interval=15, speech_language="English")
-
-        @pc.on("datachannel")
-        def on_datachannel(channel):
-            nonlocal metadata_channel
-            metadata_channel = channel
+        user_state = UserState(speech_language=msg.get("config", {}).get("language", "English"))
 
         @pc.on("track")
         def on_track(track):
+            nonlocal l_track
             if track.kind == "video":
-                pc.addTrack(LumenTrack(track, pc, user_state, metadata_channel))
+                l_track = LumenTrack(track, pc, user_state)
+                asyncio.ensure_future(l_track._consume_inbound())
+                pc.addTrack(l_track)
 
-        # 3. WebRTC Negotiation
         offer = RTCSessionDescription(sdp=msg["sdp"], type=msg["type"])
         await pc.setRemoteDescription(offer)
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
 
-        await websocket.send_text(json.dumps({
-            "sdp": pc.localDescription.sdp,
-            "type": pc.localDescription.type
-        }))
+        while pc.iceGatheringState != "complete":
+            await asyncio.sleep(0.05)
+        
+        await websocket.send_text(json.dumps({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}))
 
-        while True:
-            await asyncio.sleep(3600)
-
-    except Exception as e:
-        print(f"❌ Session Error: {e}")
+        while pc.connectionState not in ["closed", "failed"]:
+            await asyncio.sleep(1)
     finally:
+        active_sessions.discard(pc)
         await pc.close()
-        print("🔌 Session Closed")

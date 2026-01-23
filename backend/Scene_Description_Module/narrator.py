@@ -19,6 +19,7 @@ class NarratorBot:
         3. NO post-scripts or technical IDs.
         4. Keep it TELEGRAPHIC and brief.
         5. Prioritize 'directly ahead' above all else.
+        6. Keep the generated description under 300 characters strictly.
         """
         
         if self.api_key:

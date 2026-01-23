@@ -3,3 +3,33 @@
 [01:00] A crowd of people, several cars, and a bus are directly ahead, blocking your path. A truck and more vehicles are also present on your left and right.
 [01:20] A crowd of people is directly ahead, obstructing your path in the center. You are also surrounded by several cars and more people to your left and right.
 [01:40] A large group of people, several cars, a motorcycle, and a bus are directly ahead in your path. More pedestrians and vehicles are positioned along the left and right sides of the street.
+[13:08] The path ahead is clear.
+[14:25] The path ahead is clear.
+[14:55] The path ahead is clear.
+[01:17] The path ahead is clear.
+[01:47] The path ahead is clear.
+[00:42] The path ahead is clear.
+[01:12] The path ahead is clear.
+[01:42] The path ahead is clear.
+[02:19] The path ahead is clear.
+[00:25] The path ahead is clear.
+[00:43] The path ahead is clear.
+[00:43] The path ahead is clear.
+[00:22] The path ahead is clear.
+[00:29] The path is clear ahead.
+[00:21] The path ahead is clear.
+[00:22] The path ahead is clear.
+[13:58] The path ahead is clear.
+[14:28] The path ahead is clear.
+[14:58] The path ahead is clear.
+[19:15] A person is on your left, about 18 feet away.
+[00:27] The path ahead is clear.
+[00:57] The path ahead is clear.
+[01:27] The path ahead is clear.
+[01:57] The path ahead is clear.
+[02:28] The path ahead is clear.
+[03:12] There's a car to your left.
+[03:42] The path ahead is clear.
+[13:28] The path ahead is clear.
+[25:42] The path ahead is clear.
+[26:12] The path ahead is clear.

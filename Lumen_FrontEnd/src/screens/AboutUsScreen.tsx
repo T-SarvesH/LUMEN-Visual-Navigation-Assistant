@@ -25,7 +25,6 @@ const AboutScreen = ({ navigation }: any) => {
       <ScrollView contentContainerStyle={{ padding: 24 }}>
         <StyledView className="mb-10 mt-2">
           <StyledText className="text-white text-3xl font-bold">About LUMEN</StyledText>
-          <StyledText className="text-zinc-500 font-mono mt-2">v1.0.4 // Project_Intelligence</StyledText>
         </StyledView>
 
         <AboutProfile 

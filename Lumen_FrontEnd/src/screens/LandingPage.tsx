@@ -5,6 +5,7 @@ import { styled } from 'nativewind';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../App';
 import { Settings, Info } from 'lucide-react-native'; // Added Info import
+import { LumenLogo } from '../components/Logo';
 
 const StyledView = styled(View);
 const StyledText = styled(Text);
@@ -41,6 +42,10 @@ const LandingScreen: React.FC<LandingScreenProps> = ({ navigation }) => {
 
       {/* Main Content */}
       <StyledView className="flex-1 justify-center items-center">
+        <StyledView className="mb-6">
+          <LumenLogo size={100} />
+        </StyledView>
+
         <StyledView className="mb-4 p-4 rounded-2xl bg-zinc-800 border border-green-500/30">
           <StyledText className="text-6xl font-bold text-white">Lumen</StyledText>
         </StyledView>
@@ -53,6 +58,7 @@ const LandingScreen: React.FC<LandingScreenProps> = ({ navigation }) => {
       <StyledTouchable
         className="bg-green-500 w-full py-5 rounded-full items-center justify-center shadow-lg shadow-green-500/50"
         onPress={() => navigation.navigate('CameraCapture')}
+
       >
         <StyledText className="text-white text-lg font-bold">
           Start Capture

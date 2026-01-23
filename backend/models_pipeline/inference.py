@@ -3,8 +3,8 @@ import cv2
 import json
 import time
 import numpy as np
-import asyncio
 import threading
+from typing import Tuple, List, Dict, Any, Optional
 from dotenv import load_dotenv
 from ultralytics import YOLO
 from .router import RouterModel
@@ -18,28 +18,37 @@ filterwarnings('ignore')
 load_dotenv()
 
 class InferenceManager:
+    """
+    Core AI engine for LUMEN. Handles real-time YOLO routing, spatial threat 
+    analysis, and asynchronous scene narration.
+    """
     def __init__(self):
-        # Initializing Router + YOLO Inference Pipeline
-        print("Initializing Router + YOLO Inference Pipeline...")
+        print("Initializing LUMEN Inference Core...")
         self.router = RouterModel()
         self.threat_analyzer = ThreatAnalyzer()
         self.narrator = NarratorBot()
         
-        # Isolated Scenery Manager for periodic descriptions
+        # Scenery Manager handles spatial aggregation over time
         self.scenery_mgr = SceneryManager(interval=30, frame_w=1280, frame_h=720)
         
-        # Results directory for internal logging
-        self.results_dir = os.path.join(".", "models_pipeline", "testing-results")
-        os.makedirs(self.results_dir, exist_ok=True)
-
+        # Internal State
         self.frame_count = 0
         self.active_classes = []
         self.yolo_models = {}
-        self.fps_estimate = 30 
+        
+        # --- FIXED: Time-Based Cooldown ---
+        self.last_narration_time = time.time()
+        self.narration_interval = 30  # Seconds
+        self.start_time = time.time()
 
-        print("Inference Manager Ready.")
+        print("LUMEN Inference Manager Ready.")
 
-    def load_yolo_model(self, category):
+    #Update or default to 15s
+    def update_narration_interval(self, interval=15):
+        self.narration_interval = interval
+        
+    def load_yolo_model(self, category: str) -> Optional[YOLO]:
+        """Lazy-loads YOLO models to optimize VRAM usage."""
         if category not in self.yolo_models:
             if category not in YOLO_MODELS: return None
             model_path = YOLO_MODELS[category]
@@ -47,16 +56,16 @@ class InferenceManager:
             self.yolo_models[category] = YOLO(model_path).to(TORCH_DEVICE)
         return self.yolo_models[category]
 
-    def run_router(self, frame):
-        # Runs classification router at set intervals
+    def _run_router(self, frame: np.ndarray):
+        """Updates the active YOLO models based on scene classification."""
         if self.frame_count % ROUTER_INTERVAL == 0:
             router_out = self.router.predict(frame)
             self.active_classes = router_out["active_classes"]
             self.router_probs = router_out["probabilities"]
         self.frame_count += 1
 
-    def run_yolo_inference(self, frame):
-        # Runs YOLO detection on active categories
+    def _run_yolo_inference(self, frame: np.ndarray) -> Tuple[np.ndarray, List[Dict]]:
+        """Executes detections for all active model categories."""
         annotated_frame = frame.copy()
         detections = []
         for category in self.active_classes:
@@ -73,35 +82,76 @@ class InferenceManager:
                 })
         return annotated_frame, detections
 
-    def run_threat_analysis(self, annotated_frame, detections):
-        # Analyzes objects for immediate spatial threats
-        threat_frame, threat_data = self.threat_analyzer.analyze(annotated_frame, detections)
-        return threat_frame, threat_data
+    def update_scene_description(self, threat_data: Dict) -> Optional[str]:
+        """
+        Evaluates scenery every 30 seconds. Returns skeletal narration immediately
+        and triggers LLM refinement in a background thread.
+        """
+        current_time = time.time()
+        
+        # Check if 30 seconds have passed since the last narration
+        if current_time - self.last_narration_time < self.narration_interval:
+            return None
 
-    def get_scene_description(self, threat_data):
-        # Logic for periodic scene narration
-        # Interval is managed by the websocket server or frame count
+        # Format detections for the SceneryManager temporal buffer
         pseudo_tracks = []
         for tid, t in threat_data.items():
             x1, y1, x2, y2 = t["bbox-coords"]
             clean_name = str(t["object"]).lower().strip()
             pseudo_tracks.append([x1, y1, x2, y2, tid, t["confidence"], clean_name])
 
-        # Generate refined scene data
+        # SceneryManager creates a JSON summary of the last 30s
         scene_json = self.scenery_mgr.generate_refined_json(pseudo_tracks, {}, priority_override=False)
-        
+
         if scene_json:
-            # Generate the natural language narration
-            return self.narrator.generate_narration(scene_json)
+            self.last_narration_time = current_time
+            elapsed = current_time - self.start_time
+            ts_str = f"{int(elapsed // 60):02d}:{int(elapsed % 60):02d}"
+            
+            # Offload heavy Groq/LLM call to background thread to prevent lag
+            threading.Thread(
+                target=self._run_async_narration, 
+                args=(scene_json, ts_str), 
+                daemon=True
+            ).start()
+            
+            # Return Rule-Based NL immediately so the user gets instant feedback
+            return self.narrator.generate_rule_based_nl(scene_json)
+            
         return None
 
-    def process_frame(self, frame, return_info=False):
-        # Unified processing entry point for WebSocket server
-        self.run_router(frame)
-        annotated, detections = self.run_yolo_inference(frame)
-        threat_annotated, threat_data = self.run_threat_analysis(annotated, detections)
+    def _run_async_narration(self, scene_data: Dict, timestamp_str: str):
+        """Internal: Communicates with Groq API for natural language refinement."""
+        try:
+            narration = self.narrator.generate_narration(scene_data)
+            if narration:
+                print(f"\n🗣️ LUMEN [{timestamp_str}]: {narration}\n")
+                # Log narration locally for hackathon analytics/debugging
+                log_path = os.path.join(os.path.dirname(__file__), "narrations_log.txt")
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(f"[{timestamp_str}] {narration}\n")
+        except Exception as e:
+            print(f"Async Narrator Failed: {e}")
+
+    def process_frame(self, frame: np.ndarray, return_info: bool = False) -> Any:
+        """
+        Primary entry point for the FastAPI/WebSocket server. 
+        Processes video frames and generates metadata/narrations.
+        """
+        self._run_router(frame)
+        annotated, detections = self._run_yolo_inference(frame)
+        threat_annotated, threat_data = self.threat_analyzer.analyze(annotated, detections)
+        
+        # Check for periodic narration (30s interval)
+        narration = self.update_scene_description(threat_data)
         
         if return_info:
-            # Returning full metadata for WebSocket DataChannel usage
-            return threat_annotated, getattr(self, "router_probs", {}), self.active_classes, detections, threat_data
+            return {
+                "annotated_frame": threat_annotated,
+                "router_probs": getattr(self, "router_probs", {}),
+                "active_classes": self.active_classes,
+                "detections": detections,
+                "threat_data": threat_data,
+                "narration": narration 
+            }
         return threat_annotated

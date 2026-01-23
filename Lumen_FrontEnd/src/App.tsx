@@ -10,12 +10,13 @@ import CameraCaptureScreen from './screens/CameraCaptureScreen';
 import SettingsScreen from './screens/Settings';
 import { GlobalErrorFallback } from './screens/ErrorScreen';
 import AboutScreen from './screens/AboutUsScreen';
+
 // Stack param list
 export type RootStackParamList = {
   Landing: undefined;
-  CameraCapture: undefined;
+  CameraCapture: undefined; 
   Settings: undefined;
-  AboutUs: undefined;
+  AboutUs: undefined; 
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
