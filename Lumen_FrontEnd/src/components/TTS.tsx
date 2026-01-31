@@ -12,28 +12,28 @@ const StyledTouchable = styled(TouchableOpacity);
 const TTSTester = () => {
   const { language } = useSettings();
 
- const testSpeech = () => {
-  // Ensure the native engine is ready before calling any methods
+  const testSpeech = () => {
+    // Ensure the native engine is ready before calling any methods
     Tts.getInitStatus().then(() => {
-        const langCode = language === 'Hindi' ? 'hi-IN' : 'en-US';
-        const message = language === 'Hindi' 
-        ? "नमस्ते, लुमेन अब हिंदी में बात करने के लिए तैयार है।" 
+      const langCode = language === 'Hindi' ? 'hi-IN' : 'en-US';
+      const message = language === 'Hindi'
+        ? "नमस्ते, लुमेन अब हिंदी में बात करने के लिए तैयार है।"
         : "Hello, Lumen is now ready to assist you in English.";
 
-        // Use a safety check for the Tts object itself
-        if (Tts) {
-        Tts.stop(); 
+      // Use a safety check for the Tts object itself
+      if (Tts) {
+        Tts.stop();
         Tts.setDefaultLanguage(langCode);
         Tts.speak(message);
-        }
+      }
     }).catch((err) => {
-        if (err.code === 'no_engine') {
+      if (err.code === 'no_engine') {
         // Prompt user to install a TTS engine if one isn't found
         Tts.requestInstallEngine();
-        }
-        console.error("TTS Initialization Failed:", err);
+      }
+      console.error("TTS Initialization Failed:", err);
     });
-    }; 
+  };
 
   return (
     <StyledView className="mt-6 p-5 bg-zinc-800/50 border border-zinc-700 rounded-2xl">
@@ -43,17 +43,17 @@ const TTSTester = () => {
       </StyledView>
 
       <StyledText className="text-sm text-gray-500 mb-5 font-mono">
-       {`Testing in: ${language}`} 
+        {`Testing in: ${language}`}
       </StyledText>
 
       <StyledTouchable
         onPress={testSpeech}
-        className="bg-zinc-700 py-4 rounded-xl flex-row items-center justify-center space-x-3 active:bg-zinc-600 border border-zinc-600"
+        className="flex-row items-center justify-center py-4 rounded-xl bg-zinc-800 border-2 border-zinc-700 active:bg-green-500 active:border-green-400"
         accessibilityLabel="Test Text to Speech"
         accessibilityHint={`Speaks a test phrase in ${language}`}
       >
-        <Play color="#22c55e" size={18} fill="#22c55e" />
-        <StyledText className="text-white font-bold">Play Sample Phrase</StyledText>
+        <Play color="#FFF" size={20} className="mr-2" fill="#FFF" />
+        <StyledText className="text-white font-bold">PLAY SAMPLE</StyledText>
       </StyledTouchable>
     </StyledView>
   );

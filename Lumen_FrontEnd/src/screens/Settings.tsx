@@ -1,7 +1,7 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Vibration } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Languages, Timer } from 'lucide-react-native';
+import { ArrowLeft, Languages, Timer, Smartphone } from 'lucide-react-native';
 import { styled } from 'nativewind';
 import { SettingsProvider, useSettings } from '../context/SettingsContext';
 import TTSTester from '../components/TTS';
@@ -16,9 +16,8 @@ const SettingsScreen = ({ navigation }: any) => {
   const OptionButton = ({ label, isActive, onPress }: any) => (
     <StyledTouchable
       onPress={onPress}
-      className={`flex-1 py-4 rounded-xl border-2 items-center justify-center ${
-        isActive ? 'bg-green-500 border-green-400' : 'bg-zinc-800 border-zinc-700'
-      }`}
+      className={`flex-1 py-4 rounded-xl border-2 items-center justify-center ${isActive ? 'bg-green-500 border-green-400' : 'bg-zinc-800 border-zinc-700'
+        }`}
     >
       <StyledText className={`font-bold ${isActive ? 'text-zinc-900' : 'text-gray-400'}`}>
         {label}
@@ -30,7 +29,7 @@ const SettingsScreen = ({ navigation }: any) => {
     <SafeAreaView className="flex-1 bg-zinc-900 p-5">
       {/* Header */}
       <StyledView className="flex-row items-center mb-10">
-        <StyledTouchable 
+        <StyledTouchable
           onPress={() => navigation.goBack()}
           className="p-2 bg-zinc-800 rounded-full mr-4"
         >
@@ -47,15 +46,15 @@ const SettingsScreen = ({ navigation }: any) => {
             <StyledText className="text-xl text-gray-300 font-semibold">Speech Language</StyledText>
           </StyledView>
           <StyledView className="flex-row space-x-4">
-            <OptionButton 
-              label="English" 
-              isActive={language === 'English'} 
-              onPress={() => setLanguage('English')} 
+            <OptionButton
+              label="English"
+              isActive={language === 'English'}
+              onPress={() => setLanguage('English')}
             />
-            <OptionButton 
-              label="Hindi" 
-              isActive={language === 'Hindi'} 
-              onPress={() => setLanguage('Hindi')} 
+            <OptionButton
+              label="Hindi"
+              isActive={language === 'Hindi'}
+              onPress={() => setLanguage('Hindi')}
             />
           </StyledView>
         </StyledView>
@@ -68,16 +67,31 @@ const SettingsScreen = ({ navigation }: any) => {
           </StyledView>
           <StyledView className="flex-row space-x-2">
             {[15, 20, 30].map((d) => (
-              <OptionButton 
+              <OptionButton
                 key={d}
-                label={`${d}s`} 
-                isActive={duration === d} 
-                onPress={() => setDuration(d as any)} 
+                label={`${d}s`}
+                isActive={duration === d}
+                onPress={() => setDuration(d as any)}
               />
             ))}
           </StyledView>
         </StyledView>
-        <TTSTester/>
+        {/* Haptic Feedback Test */}
+        <StyledView className="mb-8">
+          <StyledView className="flex-row items-center mb-4">
+            <Smartphone color="#22c55e" size={20} className="mr-2" />
+            <StyledText className="text-xl text-gray-300 font-semibold">Haptic Feedback</StyledText>
+          </StyledView>
+          <StyledTouchable
+            onPress={() => Vibration.vibrate(200)}
+            className="flex-row items-center justify-center py-4 rounded-xl bg-zinc-800 border-2 border-zinc-700 active:bg-green-500 active:border-green-400"
+          >
+            <Smartphone color="#FFF" size={20} className="mr-2" />
+            <StyledText className="text-white font-bold">TEST VIBRATION</StyledText>
+          </StyledTouchable>
+        </StyledView>
+
+        <TTSTester />
       </ScrollView>
     </SafeAreaView>
   );

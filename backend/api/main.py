@@ -70,12 +70,12 @@ class LumenTrack(VideoStreamTrack):
             return frame
 
     def _process_ai(self, frame):
-        """Synchronous processing: Handles rotation and YOLO inference."""
+        """Synchronous processing: Handles YOLO inference."""
         img = frame.to_ndarray(format="bgr24")
         
-        # ✅ Handle dynamic rotation from phone
-        if self.orientation == "landscape":
-            img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+        # --- LANDSCAPE OPTIMIZATION ---
+        # We now enforce Landscape mode on frontend, so we expect wide (1280x720) frames.
+        # No rotation needed.
         
         results = inference_manager.process_frame(img, return_info=True)
         return results["annotated_frame"], results["narration"]
@@ -86,9 +86,18 @@ async def websocket_endpoint(websocket: WebSocket):
     pc = RTCPeerConnection()
     active_sessions.add(pc)
     l_track = None
+    metadata_channel = None
 
     @pc.on("datachannel")
     def on_datachannel(channel):
+        nonlocal metadata_channel
+        metadata_channel = channel
+        print("DEBUG: DataChannel established")
+        
+        # If track already exists, attach channel now
+        if l_track:
+            l_track.metadata_channel = channel
+
         @channel.on("message")
         def on_message(message):
             data = json.loads(message)
@@ -96,15 +105,27 @@ async def websocket_endpoint(websocket: WebSocket):
                 l_track.orientation = data["value"]
 
     try:
+        # --- OPTIMIZATION: Signal Server Readiness Immediately ---
+        # This tells the frontend it's safe to start the camera
+        await websocket.send_text(json.dumps({
+            "type": "server_ready",
+            "status": "active" 
+        }))
+
         raw_data = await websocket.receive_text()
         msg = json.loads(raw_data)
-        user_state = UserState(speech_language=msg.get("config", {}).get("language", "English"))
+        config = msg.get("config", {})
+        user_state = UserState(
+            speech_language=config.get("language", "English"),
+            description_interval=config.get("description_interval", 10)
+        )
 
         @pc.on("track")
         def on_track(track):
             nonlocal l_track
             if track.kind == "video":
-                l_track = LumenTrack(track, pc, user_state)
+                # Pass the captured channel (if exists) to the track
+                l_track = LumenTrack(track, pc, user_state, metadata_channel=metadata_channel)
                 asyncio.ensure_future(l_track._consume_inbound())
                 pc.addTrack(l_track)
 
@@ -117,6 +138,14 @@ async def websocket_endpoint(websocket: WebSocket):
             await asyncio.sleep(0.05)
         
         await websocket.send_text(json.dumps({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}))
+        
+        # --- Signal that Models/Pipeline are Ready ---
+        # Since InferenceManager is initialized at startup, we just confirm it here.
+        # In a real heavy-load scenario, we would check inference_manager.status
+        await websocket.send_text(json.dumps({
+            "type": "init_complete",
+            "status": "active"
+        }))
 
         while pc.connectionState not in ["closed", "failed"]:
             await asyncio.sleep(1)

@@ -18,11 +18,11 @@ type LandingScreenProps = {
 const LandingScreen: React.FC<LandingScreenProps> = ({ navigation }) => {
   return (
     <SafeAreaView className="flex-1 bg-zinc-900 p-5 justify-between">
-      
+
       {/* Updated Header Section: Info (Left) and Settings (Right) */}
       <StyledView className="flex-row justify-between items-center">
         {/* About Us (Top Left) */}
-        <StyledTouchable 
+        <StyledTouchable
           onPress={() => navigation.navigate('AboutUs')}
           className="p-3 rounded-full bg-zinc-800 border border-zinc-700"
           accessibilityLabel="About Project Lumen"
@@ -31,7 +31,7 @@ const LandingScreen: React.FC<LandingScreenProps> = ({ navigation }) => {
         </StyledTouchable>
 
         {/* Settings (Top Right) */}
-        <StyledTouchable 
+        <StyledTouchable
           onPress={() => navigation.navigate('Settings')}
           className="p-3 rounded-full bg-zinc-800 border border-zinc-700"
           accessibilityLabel="Open Developer Settings"
@@ -56,11 +56,11 @@ const LandingScreen: React.FC<LandingScreenProps> = ({ navigation }) => {
 
       {/* Action Button */}
       <StyledTouchable
-        className="bg-green-500 w-full py-5 rounded-full items-center justify-center shadow-lg shadow-green-500/50"
+        className="bg-green-500 w-full py-5 rounded-full items-center justify-center shadow-lg shadow-green-500/50 active:scale-95 transition-transform"
         onPress={() => navigation.navigate('CameraCapture')}
 
       >
-        <StyledText className="text-white text-lg font-bold">
+        <StyledText className="text-white text-xl font-extrabold uppercase tracking-widest">
           Start Capture
         </StyledText>
       </StyledTouchable>
