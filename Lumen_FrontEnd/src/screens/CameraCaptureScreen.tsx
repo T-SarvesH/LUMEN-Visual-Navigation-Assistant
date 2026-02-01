@@ -24,6 +24,7 @@ type Phase = "startup" | "ready" | "capture" | "failed";
 export default function CameraCaptureScreen({ navigation }: Props) {
   const [phase, setPhase] = useState<Phase>("startup");
   const [logs, setLogs] = useState<string[]>([]);
+  const [localStream, setLocalStream] = useState<any>(null);
   const [remoteStream, setRemoteStream] = useState<any>(null);
   const [dims, setDims] = useState(Dimensions.get("window"));
 
@@ -167,6 +168,7 @@ export default function CameraCaptureScreen({ navigation }: Props) {
         }
 
         streamRef.current = stream;
+        setLocalStream(stream);
 
         const pc = new RTCPeerConnection({
           iceServers: [{ urls: "stun:stun.l.google.com:19302" }],

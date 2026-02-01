@@ -31,7 +31,7 @@ class LumenTrack(VideoStreamTrack):
         super().__init__()
         self.track, self.pc, self.user_state = track, pc, user_state
         self.metadata_channel = metadata_channel
-        self.queue = asyncio.Queue(maxsize=1) # LIFO: Always process ONLY the latest frame
+        self.queue = asyncio.Queue(maxsize=1)
         self.orientation = "portrait"
 
     async def _consume_inbound(self):
@@ -42,9 +42,12 @@ class LumenTrack(VideoStreamTrack):
                 # Clear queue to ensure we only keep the newest frame (No Lag)
                 while not self.queue.empty():
                     self.queue.get_nowait()
+                # print(f"DEBUG: Frame received in queue. Size: {self.queue.qsize()}")
                 await self.queue.put(frame)
         except Exception as e:
             print(f"DEBUG: Inbound consumption stopped: {e}")
+            import traceback
+            traceback.print_exc()
 
     async def recv(self):
         frame = await self.queue.get()
@@ -52,9 +55,11 @@ class LumenTrack(VideoStreamTrack):
         
         try:
             # Parallelize Inference: Don't let YOLO block the video loop
+            # print("DEBUG: Starting AI processing...")
             annotated_img, narration = await loop.run_in_executor(
                 executor, self._process_ai, frame
             )
+            # print("DEBUG: AI processing complete.")
 
             if narration and self.metadata_channel and self.metadata_channel.readyState == "open":
                 self.metadata_channel.send(json.dumps({
@@ -66,7 +71,11 @@ class LumenTrack(VideoStreamTrack):
             new_frame = VideoFrame.from_ndarray(annotated_img, format="bgr24")
             new_frame.pts, new_frame.time_base = frame.pts, frame.time_base
             return new_frame
-        except Exception:
+
+        except Exception as e:
+            print(f"ERROR in recv loop: {e}")
+            import traceback
+            traceback.print_exc()
             return frame
 
     def _process_ai(self, frame):
@@ -83,6 +92,7 @@ class LumenTrack(VideoStreamTrack):
 @app.websocket("/Lumen-ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    print(f"DEBUG: WebSocket accepted from {websocket.client}")
     pc = RTCPeerConnection()
     active_sessions.add(pc)
     l_track = None
@@ -113,7 +123,13 @@ async def websocket_endpoint(websocket: WebSocket):
         }))
 
         raw_data = await websocket.receive_text()
+        print("DEBUG: Received WebSocket message")
         msg = json.loads(raw_data)
+        config = msg.get("config", {})
+        user_state = UserState(
+            speech_language=config.get("language", "English"),
+            description_interval=config.get("description_interval", 10)
+        )
         config = msg.get("config", {})
         user_state = UserState(
             speech_language=config.get("language", "English"),
@@ -122,15 +138,23 @@ async def websocket_endpoint(websocket: WebSocket):
 
         @pc.on("track")
         def on_track(track):
+            print(f"DEBUG: Track received: kind={track.kind}, id={track.id}")
             nonlocal l_track
             if track.kind == "video":
                 # Pass the captured channel (if exists) to the track
                 l_track = LumenTrack(track, pc, user_state, metadata_channel=metadata_channel)
                 asyncio.ensure_future(l_track._consume_inbound())
                 pc.addTrack(l_track)
+        
+        @pc.on("iceconnectionstatechange")
+        async def on_ice_connection_state_change():
+            print(f"DEBUG: ICE Connection State changed to: {pc.iceConnectionState}")
+            if pc.iceConnectionState == "failed":
+                print("DEBUG: ICE Connection failed! Check firewall or network.")
 
         offer = RTCSessionDescription(sdp=msg["sdp"], type=msg["type"])
         await pc.setRemoteDescription(offer)
+        print("DEBUG: Remote Description set")
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
 
