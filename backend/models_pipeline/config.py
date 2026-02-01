@@ -3,7 +3,7 @@ import os
 
 # BASE directory where collab-model-training is located (update if different)
 BASE_MODELS_DIR = os.path.expanduser(
-    "~/LUMEN-Visual-Navigation-Assistant/collab-model-training"
+    "../collab-model-training"
 )
 
 # EfficientNet router model (update filename if you saved differently)
