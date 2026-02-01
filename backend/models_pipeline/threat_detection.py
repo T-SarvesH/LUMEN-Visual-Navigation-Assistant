@@ -224,7 +224,7 @@ class ThreatAnalyzer:
                     "confidence": float(conf),
                     "threat_score": 0.0, 
                     "bbox-coords": [int(x1), int(y1), int(x2), int(y2)],
-                    "predicted_path": [] # Empty list for JSON safety
+                    "predicted_path": [] 
                 })
                 continue
 
@@ -283,7 +283,7 @@ class ThreatAnalyzer:
                 "confidence": float(conf),
                 "threat_score": float(threat_score),
                 "bbox-coords": [int(x1), int(y1), int(x2), int(y2)],
-                "predicted_path": predicted_path.tolist() # <--- FIXED: Convert NumPy to List
+                "predicted_path": predicted_path.tolist() 
             })
 
         # -----------------------------------
@@ -312,12 +312,6 @@ class ThreatAnalyzer:
             label = f"{display_name} | T:{threat_score:.2f}"
             cv2.putText(frame, label, (int(x1), int(y1) - 8),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
-            # Optional: Draw small dots for constituents
-            if cluster["count"] > 1:
-                for item in cluster["constituents"]:
-                    ix1, iy1, ix2, iy2 = item["bbox-coords"]
-                    cv2.rectangle(frame, (int(ix1), int(iy1)), (int(ix2), int(iy2)), (255, 255, 255), 1)
 
             final_threat_dict[cluster["id"]] = cluster
 
