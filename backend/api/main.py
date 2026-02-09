@@ -95,9 +95,12 @@ class LumenTrack(VideoStreamTrack):
         """Synchronous processing: Handles YOLO inference."""
         img = frame.to_ndarray(format="bgr24")
         
-        # --- LANDSCAPE OPTIMIZATION ---
-        # We now enforce Landscape mode on frontend, so we expect wide (1280x720) frames.
-        # No rotation needed.
+        # --- ENFORCE 720p RESOLUTION FOR CONSISTENT PROCESSING ---
+        # Resize to exactly 1280x720 to prevent DeepOCSort CMC crashes
+        TARGET_WIDTH, TARGET_HEIGHT = 1280, 720
+        h, w = img.shape[:2]
+        if h != TARGET_HEIGHT or w != TARGET_WIDTH:
+            img = cv2.resize(img, (TARGET_WIDTH, TARGET_HEIGHT))
         
         results = inference_manager.process_frame(img, return_info=True)
         return results
