@@ -54,19 +54,32 @@ class LumenTrack(VideoStreamTrack):
         loop = asyncio.get_event_loop()
         
         try:
-            # Parallelize Inference: Don't let YOLO block the video loop
-            # print("DEBUG: Starting AI processing...")
-            annotated_img, narration = await loop.run_in_executor(
+            results = await loop.run_in_executor(
                 executor, self._process_ai, frame
             )
-            # print("DEBUG: AI processing complete.")
+            
+            annotated_img = results["annotated_frame"]
+            narration = results["narration"]
+            critical_alert = results.get("critical_alert")
 
-            if narration and self.metadata_channel and self.metadata_channel.readyState == "open":
-                self.metadata_channel.send(json.dumps({
-                    "type": "narration_event",
-                    "text": narration,
-                    "language": self.user_state.speech_language
-                }))
+            if self.metadata_channel and self.metadata_channel.readyState == "open":
+                
+                # PRIORITY 1: Critical Alert
+                if critical_alert:
+                    print(f"!!! CRITICAL ALERT SENT: {critical_alert}")
+                    self.metadata_channel.send(json.dumps({
+                        "type": "critical_alert",
+                        "text": critical_alert,
+                        "language": self.user_state.speech_language
+                    }))
+                
+                # PRIORITY 2: Standard Narration (only if no critical alert to avoid overlap)
+                elif narration:
+                    self.metadata_channel.send(json.dumps({
+                        "type": "narration_event",
+                        "text": narration,
+                        "language": self.user_state.speech_language
+                    }))
 
             new_frame = VideoFrame.from_ndarray(annotated_img, format="bgr24")
             new_frame.pts, new_frame.time_base = frame.pts, frame.time_base
@@ -82,12 +95,15 @@ class LumenTrack(VideoStreamTrack):
         """Synchronous processing: Handles YOLO inference."""
         img = frame.to_ndarray(format="bgr24")
         
-        # --- LANDSCAPE OPTIMIZATION ---
-        # We now enforce Landscape mode on frontend, so we expect wide (1280x720) frames.
-        # No rotation needed.
+        # --- ENFORCE 720p RESOLUTION FOR CONSISTENT PROCESSING ---
+        # Resize to exactly 1280x720 to prevent DeepOCSort CMC crashes
+        TARGET_WIDTH, TARGET_HEIGHT = 1280, 720
+        h, w = img.shape[:2]
+        if h != TARGET_HEIGHT or w != TARGET_WIDTH:
+            img = cv2.resize(img, (TARGET_WIDTH, TARGET_HEIGHT))
         
         results = inference_manager.process_frame(img, return_info=True)
-        return results["annotated_frame"], results["narration"]
+        return results
 
 @app.websocket("/Lumen-ws")
 async def websocket_endpoint(websocket: WebSocket):

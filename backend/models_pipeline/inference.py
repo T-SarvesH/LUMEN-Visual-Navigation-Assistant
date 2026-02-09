@@ -41,6 +41,10 @@ class InferenceManager:
         self.narration_interval = 30  # Seconds
         self.start_time = time.time()
 
+        # Alert Cooldown State
+        self.last_alert_time = 0
+        self.alert_cooldown = 4.0
+
         print("LUMEN Inference Manager Ready.")
 
     #Update or default to 15s
@@ -133,6 +137,28 @@ class InferenceManager:
         except Exception as e:
             print(f"Async Narrator Failed: {e}")
 
+    def check_immediate_threats(self, threat_data) -> Optional[str]:
+        """
+        Checks for critical threats in real-time.
+        Returns a short, urgent warning string if a threat is detected.
+        """
+        current_time = time.time()
+        
+        # Don't spam warnings
+        if current_time - self.last_alert_time < self.alert_cooldown:
+            return None
+
+        critical_threat = self.threat_analyzer.get_critical_threat(threat_data, frame_width=1280)
+        
+        if critical_threat:
+            self.last_alert_time = current_time
+            obj_name = critical_threat["object"]
+            position = critical_threat["position"]
+            # Short, urgent text
+            return f"Stop! {obj_name} {position}."
+            
+        return None
+    
     def process_frame(self, frame: np.ndarray, return_info: bool = False) -> Any:
         """
         Primary entry point for the FastAPI/WebSocket server. 
@@ -144,6 +170,10 @@ class InferenceManager:
         
         # Check for periodic narration (30s interval)
         narration = self.update_scene_description(threat_data)
+
+        # Check for CRITICAL Threats (Every Frame)
+        # If we have a critical alert, it overrides standard narration in this return
+        critical_alert = self.check_immediate_threats(threat_data)
         
         if return_info:
             return {
@@ -152,6 +182,7 @@ class InferenceManager:
                 "active_classes": self.active_classes,
                 "detections": detections,
                 "threat_data": threat_data,
-                "narration": narration 
+                "narration": narration,
+                "critical_alert": critical_alert
             }
         return threat_annotated
