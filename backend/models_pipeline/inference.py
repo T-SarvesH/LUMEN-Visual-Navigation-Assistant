@@ -148,13 +148,14 @@ class InferenceManager:
         if current_time - self.last_alert_time < self.alert_cooldown:
             return None
 
-        critical_threat = self.threat_analyzer.get_critical_threat(threat_data)
+        critical_threat = self.threat_analyzer.get_critical_threat(threat_data, frame_width=1280)
         
         if critical_threat:
             self.last_alert_time = current_time
             obj_name = critical_threat["object"]
+            position = critical_threat["position"]
             # Short, urgent text
-            return f"Stop! {obj_name} approaching."
+            return f"Stop! {obj_name} {position}."
             
         return None
     

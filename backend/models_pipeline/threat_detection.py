@@ -333,10 +333,10 @@ class ThreatAnalyzer:
         return frame, final_threat_dict
     
     
-    def get_critical_threat(self, threat_data):
+    def get_critical_threat(self, threat_data, frame_width=1280):
         """
         Scans processed threat clusters for immediate dangers.
-        Returns the single most dangerous object if it exceeds the critical threshold.
+        Returns the object and its specific direction.
         """
         CRITICAL_THRESHOLD = 0.85
         highest_threat = None
@@ -345,16 +345,27 @@ class ThreatAnalyzer:
         for _, data in threat_data.items():
             score = data.get("threat_score", 0.0)
             
-            # Filter: Must be high threat AND strictly strictly closer (y2 large)
-            # You can add logic here to check if it's centrally aligned
             if score > CRITICAL_THRESHOLD and score > max_score:
                 max_score = score
                 highest_threat = data
 
         if highest_threat:
+            # Calculate horizontal center of the bbox
+            x1, _, x2, _ = highest_threat["bbox-coords"]
+            cx = (x1 + x2) / 2
+            
+            # Determine Direction based on Frame Width segments
+            # Left < 35% | 35% < Ahead < 65% | Right > 65%
+            if cx < frame_width * 0.35:
+                pos = "on your left"
+            elif cx > frame_width * 0.65:
+                pos = "on your right"
+            else:
+                pos = "directly ahead"
+
             return {
                 "object": highest_threat["object"],
                 "score": highest_threat["threat_score"],
-                "position": "ahead" # You can calculate Left/Right based on bbox x-coords
+                "position": pos
             }
         return None
