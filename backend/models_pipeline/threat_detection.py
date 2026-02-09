@@ -331,3 +331,30 @@ class ThreatAnalyzer:
         cv2.ellipse(frame, zone_center, (major_axis, minor_axis), 0, 180, 360, ROI_COLOR, 2, cv2.LINE_AA)
 
         return frame, final_threat_dict
+    
+    
+    def get_critical_threat(self, threat_data):
+        """
+        Scans processed threat clusters for immediate dangers.
+        Returns the single most dangerous object if it exceeds the critical threshold.
+        """
+        CRITICAL_THRESHOLD = 0.85
+        highest_threat = None
+        max_score = -1.0
+
+        for _, data in threat_data.items():
+            score = data.get("threat_score", 0.0)
+            
+            # Filter: Must be high threat AND strictly strictly closer (y2 large)
+            # You can add logic here to check if it's centrally aligned
+            if score > CRITICAL_THRESHOLD and score > max_score:
+                max_score = score
+                highest_threat = data
+
+        if highest_threat:
+            return {
+                "object": highest_threat["object"],
+                "score": highest_threat["threat_score"],
+                "position": "ahead" # You can calculate Left/Right based on bbox x-coords
+            }
+        return None

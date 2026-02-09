@@ -187,11 +187,28 @@ export default function CameraCaptureScreen({ navigation }: Props) {
           if (!isMounted) return;
           try {
             const data = JSON.parse(e.data);
-            if (data.type === "narration_event") {
-              console.log("Attempting to speak:", data.text);
-              console.log("Triggering Haptics (Vibration Core)...");
-              // ReactNativeHapticFeedback.trigger("impactHeavy", hapticOptions);
-              Vibration.vibrate(200); // 200ms basic vibration, universally supported
+            // --- TYPE 1: CRITICAL ALERT ---
+            if (data.type === "critical_alert") {
+              console.log("CRITICAL ALERT RECEIVED:", data.text);
+              
+              // 1. Heavy Haptic Pattern (SOS-like or distinct heavy thuds)
+              // Using Vibration API for custom pattern (Android) or Haptic library
+              // Pattern: Wait 0ms, Vibrate 500ms, Wait 100ms, Vibrate 500ms
+              Vibration.vibrate([0, 500, 100, 500]); 
+              
+              // Optional: Flash visual indicator logic could go here
+
+              // 2. TTS Override (Flush current queue and speak immediately)
+              try {
+                Tts.stop(); // Stop any current casual narration
+                Tts.speak(data.text); 
+              } catch (err) { console.error(err); }
+            } 
+            
+            // --- TYPE 2: STANDARD NARRATION ---
+            else if (data.type === "narration_event") {
+              // Standard feedback
+              ReactNativeHapticFeedback.trigger("impactLight", hapticOptions);
               try { Tts.speak(data.text); } catch (err) { console.error(err); }
             }
           } catch (err) { console.error(err); }
