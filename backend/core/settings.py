@@ -40,7 +40,8 @@ INSTALLED_APPS = [
     'api',
     'Object_Detection_and_Scene_Description_Model',
     'Scene_Description_Module',
-    'models_pipeline'
+    'models_pipeline',
+    'testing'
 ]
 
 MIDDLEWARE = [

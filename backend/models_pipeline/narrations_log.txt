@@ -61,3 +61,19 @@
 [00:34] The path is clear ahead.
 [01:04] The path ahead is clear.
 [03:35] The path ahead is clear.
+[00:31] The path ahead is clear.
+[01:01] A person is to your left.
+[00:30] The path ahead is clear.
+[01:00] The path ahead is clear.
+[12:08] The path ahead is clear.
+[12:38] The path ahead is clear.
+[00:42] The path ahead is clear.
+[01:12] The path ahead is clear.
+[05:46] The path is clear ahead.
+[06:16] A person is ahead, about a block away.
+[00:30] A person is ahead, about twenty feet away.
+[00:30] A person is directly ahead.
+[00:28] The path ahead is clear.
+[00:58] The path ahead is clear.
+[02:12] The path ahead is clear.
+[02:42] The path ahead is clear.

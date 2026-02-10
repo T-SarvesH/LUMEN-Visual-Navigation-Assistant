@@ -1,19 +1,27 @@
 import sys, os, json, asyncio, logging
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from functools import lru_cache
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
 import cv2
-from .models import UserState
+import django
+
+# --- DJANGO SETUP FOR STANDALONE SCRIPT ---
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+django.setup()
+
+# Adjusted Imports for 'testing' app location
+from api.models import UserState
 from models_pipeline.inference import InferenceManager
-from testing.session_logger import SessionLogger
+from .session_logger import SessionLogger
 
 # --- Optimization Setup ---
 executor = ThreadPoolExecutor(max_workers=2) # Decouples AI from WebRTC heartbeats
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="Lumen API")
+app = FastAPI(title="Lumen Test API (Port 8002)")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -45,7 +53,6 @@ class LumenTrack(VideoStreamTrack):
                 # Clear queue to ensure we only keep the newest frame (No Lag)
                 while not self.queue.empty():
                     self.queue.get_nowait()
-                # print(f"DEBUG: Frame received in queue. Size: {self.queue.qsize()}")
                 await self.queue.put(frame)
         except Exception as e:
             print(f"DEBUG: Inbound consumption stopped: {e}")
@@ -99,18 +106,15 @@ class LumenTrack(VideoStreamTrack):
                         "obj_count": obj_count
                     }))
                 except Exception:
-                except Exception:
                     pass # Don't crash if buffer full
 
-            # --- SESSION LOGGING ---
+            # --- FORCE SESSION LOGGING FOR TEST SERVER ---
             if self.logger:
-                # We need the Original Frame (img) for video recording?
-                # _process_ai returns annotated_img. We can record that.
                 self.logger.log_frame_data(
                     frame_id=self.frame_count,
                     threat_data=results.get("threat_data"),
                     detections=results.get("detections"),
-                    narration=narration or critical_alert, # Log alert as narration type for now or separate? Logger handles narration string.
+                    narration=narration or critical_alert, 
                     frame_img=annotated_img
                 )
             self.frame_count += 1
@@ -130,7 +134,6 @@ class LumenTrack(VideoStreamTrack):
         img = frame.to_ndarray(format="bgr24")
         
         # --- ENFORCE 720p RESOLUTION FOR CONSISTENT PROCESSING ---
-        # Resize to exactly 1280x720 to prevent DeepOCSort CMC crashes
         TARGET_WIDTH, TARGET_HEIGHT = 1280, 720
         h, w = img.shape[:2]
         if h != TARGET_HEIGHT or w != TARGET_WIDTH:
@@ -139,35 +142,43 @@ class LumenTrack(VideoStreamTrack):
         results = inference_manager.process_frame(img, return_info=True)
         return results
 
-@app.websocket("/Lumen-ws")
-async def websocket_endpoint(websocket: WebSocket):
+from fastapi import FastAPI, WebSocket, Depends
+from functools import lru_cache
+
+# ... imports ...
+
+# --- DEPENDENCY INJECTION SETUP ---
+class SessionFactory:
+    """
+    Factory for creating session components.
+    Allows for easy mocking and swapping of logging strategies.
+    """
+    def create_logger(self, session_name: str, record_video: bool) -> SessionLogger:
+        return SessionLogger(session_name=session_name, record_video=record_video)
+
+@lru_cache()
+def get_session_factory() -> SessionFactory:
+    return SessionFactory()
+
+# ... existing code ...
+
+@app.websocket("/Lumen-test-ws")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    factory: SessionFactory = Depends(get_session_factory)
+):
     await websocket.accept()
-    print(f"DEBUG: WebSocket accepted from {websocket.client}")
+    # ... existing setup ...
     pc = RTCPeerConnection()
     active_sessions.add(pc)
     l_track = None
     metadata_channel = None
     session_logger = None
 
-    @pc.on("datachannel")
-    def on_datachannel(channel):
-        nonlocal metadata_channel
-        metadata_channel = channel
-        print("DEBUG: DataChannel established")
-        
-        # If track already exists, attach channel now
-        if l_track:
-            l_track.metadata_channel = channel
-
-        @channel.on("message")
-        def on_message(message):
-            data = json.loads(message)
-            if data["type"] == "orientation_sync" and l_track:
-                l_track.orientation = data["value"]
+    # ... datachannel and ready message ...
 
     try:
-        # --- OPTIMIZATION: Signal Server Readiness Immediately ---
-        # This tells the frontend it's safe to start the camera
+        # --- RESTORED LOGIC ---
         await websocket.send_text(json.dumps({
             "type": "server_ready",
             "status": "active" 
@@ -178,22 +189,23 @@ async def websocket_endpoint(websocket: WebSocket):
         msg = json.loads(raw_data)
         config = msg.get("config", {})
         
-        # Initialize User State
         user_state = UserState(
             speech_language=config.get("language", "English"),
             description_interval=config.get("description_interval", 10)
         )
         
-        # Initialize Session Logger (Video Recording Toggle)
+        # USE FACTORY FOR DI
         record_video = config.get("record_session", False)
-        session_logger = SessionLogger(session_name="Mobile_Session", record_video=record_video)
+        # We inject the factory to create the logger
+        session_logger = factory.create_logger(session_name="TEST_Session", record_video=record_video)
+
+        # ... rest of the logic ...
 
         @pc.on("track")
         def on_track(track):
             print(f"DEBUG: Track received: kind={track.kind}, id={track.id}")
             nonlocal l_track
             if track.kind == "video":
-                # Pass the logger to the track
                 l_track = LumenTrack(track, pc, user_state, metadata_channel=metadata_channel, logger=session_logger)
                 asyncio.ensure_future(l_track._consume_inbound())
                 pc.addTrack(l_track)
@@ -215,7 +227,6 @@ async def websocket_endpoint(websocket: WebSocket):
         
         await websocket.send_text(json.dumps({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}))
         
-        # --- Signal that Models/Pipeline are Ready ---
         await websocket.send_text(json.dumps({
             "type": "init_complete",
             "status": "active"

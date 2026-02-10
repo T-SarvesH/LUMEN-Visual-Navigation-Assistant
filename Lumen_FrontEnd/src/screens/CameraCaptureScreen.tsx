@@ -5,6 +5,7 @@ import {
   mediaDevices,
   RTCPeerConnection,
   RTCSessionDescription,
+  MediaStream,
 } from "react-native-webrtc";
 import Tts from "react-native-tts";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -12,6 +13,7 @@ import { RootStackParamList } from "../App";
 import { useSettings } from "../context/SettingsContext";
 import { getWebSocketUrl } from "../utils/ipUtils";
 import ReactNativeHapticFeedback from "react-native-haptic-feedback";
+import DevOverlay from "../components/DevOverlay";
 
 const hapticOptions = {
   enableVibrateFallback: true,
@@ -24,20 +26,24 @@ type Phase = "startup" | "ready" | "capture" | "failed";
 export default function CameraCaptureScreen({ navigation }: Props) {
   const [phase, setPhase] = useState<Phase>("startup");
   const [logs, setLogs] = useState<string[]>([]);
-  const [localStream, setLocalStream] = useState<any>(null);
-  const [remoteStream, setRemoteStream] = useState<any>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [dims, setDims] = useState(Dimensions.get("window"));
 
   // State to track if backend neural models are loaded
   const [isPipelineReady, setIsPipelineReady] = useState(false);
 
-  const { duration, language } = useSettings();
+  // Dev Stats
+  const [fps, setFps] = useState(0);
+  const [latency, setLatency] = useState(0);
+  const [threatCount, setThreatCount] = useState(0);
+
+  const { duration, language, isDevMode, isRecordingEnabled } = useSettings();
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const dataChannelRef = useRef<any>(null);
-  const streamRef = useRef<any>(null);
-  const offerSentRef = useRef(false);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const addLog = (msg: string) => {
     setLogs((prev) => [...prev, `> ${msg}`].slice(-10));
@@ -70,21 +76,8 @@ export default function CameraCaptureScreen({ navigation }: Props) {
       console.error("TTS Init error:", err);
     });
 
-    const onStart = (event: any) => console.log("TTS Started", event);
-    const onFinish = (event: any) => console.log("TTS Finished", event);
-    const onCancel = (event: any) => console.log("TTS Cancelled", event);
-
-    // Cast to 'any' because strict types say it returns void, but runtime returns a subscription
-    const startSub = Tts.addEventListener("tts-start", onStart) as any;
-    const finishSub = Tts.addEventListener("tts-finish", onFinish) as any;
-    const cancelSub = Tts.addEventListener("tts-cancel", onCancel) as any;
-
     return () => {
-      // Library's removeEventListener calls deprecated 'removeListener' which crashes.
-      // We use the subscription's .remove() method instead.
-      if (startSub?.remove) startSub.remove();
-      if (finishSub?.remove) finishSub.remove();
-      if (cancelSub?.remove) cancelSub.remove();
+      // Cleanup listeners if necessary, though Tts is global usually
     };
   }, [language]);
 
@@ -96,8 +89,9 @@ export default function CameraCaptureScreen({ navigation }: Props) {
     const setupSocket = () => {
       try {
         if (!isMounted) return;
-        addLog("Connecting to Server...");
-        const ws = new WebSocket(getWebSocketUrl());
+        addLog(`Connecting to ${isDevMode ? "Test" : "Main"} Server...`);
+        // Connect to 8002 if DevMode is true, else 8001
+        const ws = new WebSocket(getWebSocketUrl(isDevMode));
         wsRef.current = ws;
 
         ws.onopen = () => {
@@ -117,6 +111,10 @@ export default function CameraCaptureScreen({ navigation }: Props) {
             // NOW start the heavy lifting
             setupMediaAndPeerConnection(ws);
           }
+          else if (data.type === "init_complete") {
+            // Redundant but confirms readiness
+            setIsPipelineReady(true);
+          }
           else if (data.type === "answer") {
             if (pcRef.current) {
               await pcRef.current.setRemoteDescription(new RTCSessionDescription(data));
@@ -128,15 +126,17 @@ export default function CameraCaptureScreen({ navigation }: Props) {
               Tts.speak("LUMEN is active.");
             }
           }
-          else if (data.type === "init_complete") {
-            console.log("Received init_complete (Redundant check)");
-          }
         };
 
-        ws.onerror = () => {
+        ws.onerror = (e) => {
           if (!isMounted) return;
+          console.error("WS Error:", e);
           addLog("WS Error. Is backend running?");
           setPhase("failed");
+        };
+
+        ws.onclose = () => {
+          if (isMounted) addLog("WS Closed.");
         };
 
       } catch (e: any) {
@@ -151,20 +151,19 @@ export default function CameraCaptureScreen({ navigation }: Props) {
       try {
         if (!isMounted) return;
 
+        // Get User Media
         const stream = await mediaDevices.getUserMedia({
           video: {
             facingMode: "environment",
-            // ENFORCE EXACT 720p to prevent DeepOCSort CMC crashes
             width: { exact: 1280 },
             height: { exact: 720 },
             frameRate: { ideal: 30, min: 24 },
           },
           audio: false,
-        });
+        }) as MediaStream;
 
-        // SAFETY: If unmounted during getUserMedia await, stop stream immediately
         if (!isMounted) {
-          stream.getTracks().forEach((t: any) => t.stop());
+          stream.getTracks().forEach((t) => t.stop());
           return;
         }
 
@@ -176,10 +175,8 @@ export default function CameraCaptureScreen({ navigation }: Props) {
         });
         pcRef.current = pc;
 
-        // Add Tracks
         stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-        // Data Channel
         const dc = pc.createDataChannel("lumen_sync");
         const dcAny = dc as any;
         dataChannelRef.current = dc;
@@ -188,35 +185,28 @@ export default function CameraCaptureScreen({ navigation }: Props) {
           if (!isMounted) return;
           try {
             const data = JSON.parse(e.data);
-            // --- TYPE 1: CRITICAL ALERT ---
-            if (data.type === "critical_alert") {
+
+            // STATS
+            if (data.type === "stats") {
+              setFps(data.fps);
+              setLatency(data.latency);
+              setThreatCount(data.obj_count);
+            }
+            // CRITICAL ALERT
+            else if (data.type === "critical_alert") {
               console.log("CRITICAL ALERT RECEIVED:", data.text);
-
-              // 1. Heavy Haptic Pattern (SOS-like or distinct heavy thuds)
-              // Using Vibration API for custom pattern (Android) or Haptic library
-              // Pattern: Wait 0ms, Vibrate 500ms, Wait 100ms, Vibrate 500ms
               Vibration.vibrate([0, 500, 100, 500]);
-
-              // Optional: Flash visual indicator logic could go here
-
-              // 2. TTS Override (Flush current queue and speak immediately)
               try {
-                Tts.stop(); // Stop any current casual narration
+                Tts.stop();
                 Tts.speak(data.text);
               } catch (err) { console.error(err); }
             }
-
-            // --- TYPE 2: STANDARD NARRATION ---
+            // STANDARD NARRATION
             else if (data.type === "narration_event") {
-              // Standard feedback
               ReactNativeHapticFeedback.trigger("impactLight", hapticOptions);
               try { Tts.speak(data.text); } catch (err) { console.error(err); }
             }
           } catch (err) { console.error(err); }
-        };
-
-        dcAny.onopen = () => {
-          if (isMounted) addLog("DataChannel connected.");
         };
 
         const pcAny = pc as any;
@@ -226,22 +216,25 @@ export default function CameraCaptureScreen({ navigation }: Props) {
           }
         };
 
-        // Create Offer
-        const offer = await pc.createOffer();
+        const offer = await pc.createOffer(undefined);
         if (!isMounted) return;
         await pc.setLocalDescription(offer);
 
-        // Send Offer via existing WS
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
             type: "offer",
             sdp: offer.sdp,
-            config: { description_interval: duration, language },
+            config: {
+              description_interval: duration,
+              language,
+              record_session: isRecordingEnabled
+            },
           }));
         }
 
       } catch (err: any) {
         if (!isMounted) return;
+        console.error("Media Error:", err);
         addLog(`Media/PC Error: ${err.message}`);
         setPhase("failed");
       }
@@ -252,18 +245,17 @@ export default function CameraCaptureScreen({ navigation }: Props) {
     return () => {
       console.log("Cleaning up CameraCaptureScreen resources...");
       isMounted = false;
-      streamRef.current?.getTracks().forEach((t: any) => t.stop());
+      streamRef.current?.getTracks().forEach((t) => t.stop());
       pcRef.current?.close();
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
       }
     };
-  }, [duration, language]); // Re-run if settings change, though this might cause re-connection
+  }, [duration, language, isDevMode, isRecordingEnabled]);
 
   return (
     <View style={styles.container}>
-      {/* 1. Landscape Enforcement Overlay */}
       {dims.height > dims.width && (
         <View style={styles.overlay}>
           <Text style={styles.overlayText}>PLEASE ROTATE DEVICE</Text>
@@ -271,15 +263,23 @@ export default function CameraCaptureScreen({ navigation }: Props) {
         </View>
       )}
 
-      {/* 2. Main Content (Disabled underneath if portrait, though overlay covers it) */}
+      {/* Render Remote Stream if capturing, else Terminal or Local if needed (usually just Terminal until ready) */}
       {phase === "capture" && remoteStream ? (
-        <RTCView
-          streamURL={remoteStream.toURL()}
-          style={{ width: dims.width, height: dims.height }}
-          objectFit="cover"
-          mirror={false}
-          zOrder={1}
-        />
+        <>
+          <RTCView
+            streamURL={remoteStream.toURL()}
+            style={{ width: dims.width, height: dims.height }}
+            objectFit="cover"
+            mirror={false}
+            zOrder={1}
+          />
+          <DevOverlay
+            isActive={isDevMode}
+            fps={fps}
+            latency={latency}
+            threats={[]}
+          />
+        </>
       ) : (
         <View style={styles.terminal}>
           {logs.map((log, i) => (
@@ -293,25 +293,24 @@ export default function CameraCaptureScreen({ navigation }: Props) {
       <TouchableOpacity
         style={[
           styles.button,
-          phase === "failed" ? styles.btnError : styles.btnPrimary,
-          // Fade out if disabled
-          (phase !== "ready" && phase !== "failed" && !isPipelineReady) || dims.height > dims.width
-            ? { opacity: 0.5, backgroundColor: "#27272a" } // Zinc-800 disabled state
+          (phase === "failed" || phase === "capture") ? styles.btnError : styles.btnPrimary,
+          (phase !== "ready" && phase !== "failed" && phase !== "capture" && !isPipelineReady) || dims.height > dims.width
+            ? { opacity: 0.5, backgroundColor: "#27272a", shadowOpacity: 0 }
             : {}
         ]}
-        disabled={(phase !== "ready" && phase !== "failed") || dims.height > dims.width}
+        disabled={(phase !== "ready" && phase !== "failed" && phase !== "capture") || dims.height > dims.width}
         onPress={() =>
           phase === "ready" ? setPhase("capture") : navigation.goBack()
         }
       >
         <Text style={styles.btnText}>
-          {/* ... existing text logic ... */}
-          {/* Just keep existing text logic, but the button checks disabled state */}
           {phase === "ready"
             ? "START VISUAL ASSISTANCE"
-            : phase === "failed"
-              ? "RETURN HOME"
-              : isPipelineReady ? "FINALIZING..." : "CONNECTING TO SERVER..."}
+            : phase === "capture"
+              ? "STOP SESSION"
+              : phase === "failed"
+                ? "RETURN HOME"
+                : isPipelineReady ? "SYSTEM READY" : "CONNECTING..."}
         </Text>
       </TouchableOpacity>
     </View>
@@ -319,16 +318,16 @@ export default function CameraCaptureScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#09090b" }, // Zinc-950 equivalent
+  container: { flex: 1, backgroundColor: "#09090b" },
   terminal: {
     flex: 1,
-    backgroundColor: "#18181b", // Zinc-900
+    backgroundColor: "#18181b",
     margin: 16,
     borderRadius: 16,
     padding: 20,
-    justifyContent: "flex-end", // Logs start from bottom like terminal
+    justifyContent: "flex-end",
     borderWidth: 1,
-    borderColor: "#27272a", // Zinc-800
+    borderColor: "#27272a",
     elevation: 4,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
@@ -336,9 +335,9 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   logText: {
-    color: "#4ade80", // Green-400
+    color: "#4ade80",
     fontFamily: "monospace",
-    fontSize: 15, // Optimal size for readability
+    fontSize: 15,
     marginBottom: 8,
     lineHeight: 22,
   },
@@ -347,18 +346,18 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     paddingVertical: 20,
     alignItems: "center",
-    borderRadius: 9999, // Pill shape
+    borderRadius: 9999,
     elevation: 6,
-    shadowColor: "#22c55e", // Green shadow
+    shadowColor: "#22c55e",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
   },
   btnPrimary: {
-    backgroundColor: "#22c55e", // Lumen Green
+    backgroundColor: "#22c55e",
   },
   btnError: {
-    backgroundColor: "#ef4444", // Red-500
+    backgroundColor: "#ef4444",
   },
   btnText: {
     color: "#FFF",

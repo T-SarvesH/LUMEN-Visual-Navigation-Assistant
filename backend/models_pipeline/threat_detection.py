@@ -161,6 +161,11 @@ class ThreatAnalyzer:
                 max_threat = max(x['threat_score'] for x in current_cluster)
                 max_conf = max(x['confidence'] for x in current_cluster)
                 
+                # Aggregate detailed metrics (Researcher View)
+                max_prox = max(x.get('sh_proximity', 0.0) for x in current_cluster)
+                max_loom = max(x.get('sh_looming', 0.0) for x in current_cluster)
+                max_anom = max(x.get('sh_anomaly', 0.0) for x in current_cluster)
+                
                 count = len(current_cluster)
                 display_name = f"{count} {cls}s" if count > 1 else cls
                 
@@ -168,9 +173,15 @@ class ThreatAnalyzer:
                     "id": f"{cls}_{i}", 
                     "object": display_name,
                     "raw_class": cls,
+                    "idx_in_cluster": i, # Helper for logging
                     "count": count,
                     "confidence": max_conf,
                     "threat_score": max_threat,
+                    "components": {
+                        "proximity": max_prox,
+                        "looming": max_loom,
+                        "anomaly": max_anom
+                    },
                     "bbox-coords": [min_x, min_y, max_x, max_y],
                     "constituents": current_cluster 
                 })
@@ -287,6 +298,9 @@ class ThreatAnalyzer:
                     "object": cls_name,
                     "confidence": float(conf),
                     "threat_score": float(threat_score),
+                    "sh_proximity": float(proximity_score),  # Sub-Health: Proximity
+                    "sh_looming": float(looming_score),      # Sub-Health: Looming
+                    "sh_anomaly": float(anomaly_score),      # Sub-Health: Anomaly
                     "bbox-coords": [int(x1), int(y1), int(x2), int(y2)],
                     "predicted_path": predicted_path.tolist() 
                 })

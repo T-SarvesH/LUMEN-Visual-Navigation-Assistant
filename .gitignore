@@ -112,3 +112,6 @@ htmlcov/
 
 #Exclude all video testing files as they are too large in size
 *.mp4
+
+#Exclude the logs directory for now
+*/*/logs

@@ -38,12 +38,14 @@ class InferenceManager:
         
         # --- FIXED: Time-Based Cooldown ---
         self.last_narration_time = time.time()
-        self.narration_interval = 30  # Seconds
+        self.narration_interval = 15  # Reduced to 15s for more frequent updates
         self.start_time = time.time()
 
         # Alert Cooldown State
         self.last_alert_time = 0
-        self.alert_cooldown = 4.0
+        self.alert_cooldown = 2.0 # Reduced to 2s
+
+        self.last_frame_time = time.time()
 
         print("LUMEN Inference Manager Ready.")
 
@@ -66,6 +68,11 @@ class InferenceManager:
             router_out = self.router.predict(frame)
             self.active_classes = router_out["active_classes"]
             self.router_probs = router_out["probabilities"]
+            
+        # Default active classes if router hasn't run yet or failed
+        if not hasattr(self, 'active_classes'):
+            self.active_classes = []
+            
         self.frame_count += 1
 
     def _run_yolo_inference(self, frame: np.ndarray) -> Tuple[np.ndarray, List[Dict]]:
@@ -164,6 +171,8 @@ class InferenceManager:
         Primary entry point for the FastAPI/WebSocket server. 
         Processes video frames and generates metadata/narrations.
         """
+        t0 = time.time()
+        
         self._run_router(frame)
         annotated, detections = self._run_yolo_inference(frame)
         threat_annotated, threat_data = self.threat_analyzer.analyze(annotated, detections)
@@ -172,8 +181,13 @@ class InferenceManager:
         narration = self.update_scene_description(threat_data)
 
         # Check for CRITICAL Threats (Every Frame)
-        # If we have a critical alert, it overrides standard narration in this return
         critical_alert = self.check_immediate_threats(threat_data)
+        
+        # --- Performance Logging ---
+        t1 = time.time()
+        latency = (t1 - t0) * 1000
+        fps = 1.0 / (t1 - self.last_frame_time) if (t1 - self.last_frame_time) > 0 else 0
+        self.last_frame_time = t1
         
         if return_info:
             return {
@@ -183,6 +197,8 @@ class InferenceManager:
                 "detections": detections,
                 "threat_data": threat_data,
                 "narration": narration,
-                "critical_alert": critical_alert
+                "critical_alert": critical_alert,
+                "fps": fps,
+                "latency": latency
             }
         return threat_annotated

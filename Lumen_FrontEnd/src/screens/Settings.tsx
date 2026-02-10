@@ -11,7 +11,14 @@ const StyledText = styled(Text);
 const StyledTouchable = styled(TouchableOpacity);
 
 const SettingsScreen = ({ navigation }: any) => {
-  const { duration, setDuration, language, setLanguage } = useSettings();
+  const {
+    duration, setDuration,
+    language, setLanguage,
+    isDevMode, setIsDevMode,
+    isRecordingEnabled, setIsRecordingEnabled
+  } = useSettings();
+
+  const isActive = isDevMode; // Alias for color logic in replacement chunk
 
   const OptionButton = ({ label, isActive, onPress }: any) => (
     <StyledTouchable
@@ -89,6 +96,46 @@ const SettingsScreen = ({ navigation }: any) => {
             <Smartphone color="#FFF" size={20} className="mr-2" />
             <StyledText className="text-white font-bold">TEST VIBRATION</StyledText>
           </StyledTouchable>
+        </StyledView>
+
+        {/* Developer Mode Toggle */}
+        <StyledView className="mb-8 p-4 bg-zinc-800 rounded-xl border-2 border-zinc-700">
+          <StyledView className="flex-row items-center justify-between mb-2">
+            <StyledView className="flex-row items-center">
+              <Smartphone color={isDevMode ? "#ef4444" : "#22c55e"} size={20} className="mr-2" />
+              <StyledText className="text-xl text-gray-300 font-semibold">Developer Mode</StyledText>
+            </StyledView>
+            <StyledTouchable
+              onPress={() => setIsDevMode(!isDevMode)}
+              className={`px-4 py-2 rounded-lg ${isDevMode ? 'bg-green-500' : 'bg-red-500'}`}
+            >
+              <StyledText className="text-white font-bold">{isDevMode ? "ON" : "OFF"}</StyledText>
+            </StyledTouchable>
+          </StyledView>
+          <StyledText className="text-gray-400 text-sm mb-4">
+            Enables visual bounding boxes, FPS stats, and research data tagging.
+          </StyledText>
+
+          {/* Video Recording Sub-Toggle (Only visible if Dev Mode is ON, or always visible? User said "we can also save recordings") 
+              Let's make it always visible but grouped near research settings.
+          */}
+          <View className="h-[1px] bg-zinc-700 my-2" />
+
+          <StyledView className="flex-row items-center justify-between mt-2">
+            <StyledView className="flex-row items-center">
+              {/* Use a different icon or recycle Smartphone for now */}
+              <StyledText className="text-lg text-gray-300">Record Session Video</StyledText>
+            </StyledView>
+            <StyledTouchable
+              onPress={() => setIsRecordingEnabled(!isRecordingEnabled)}
+              className={`px-4 py-2 rounded-lg ${isRecordingEnabled ? 'bg-green-500' : 'bg-zinc-600'}`}
+            >
+              <StyledText className="text-white font-bold">{isRecordingEnabled ? "REC" : "OFF"}</StyledText>
+            </StyledTouchable>
+          </StyledView>
+          <StyledText className="text-gray-500 text-xs mt-1">
+            Saves MP4 video to server. Consumes storage space.
+          </StyledText>
         </StyledView>
 
         <TTSTester />
