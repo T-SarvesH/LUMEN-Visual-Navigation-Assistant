@@ -1,13 +1,14 @@
 {
-  "name": "Lumen_FrontEnd",
+  "name": "lumen-frontend",
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "android": "react-native run-android",
-    "ios": "react-native run-ios",
+    "android": "npx ts-node scripts/set-ip.ts && react-native run-android",
+    "ios": "npx ts-node scripts/set-ip.ts && react-native run-ios",
     "lint": "eslint .",
-    "start": "react-native start",
+    "start": "npx ts-node scripts/set-ip.ts && react-native start",
     "test": "jest",
+    "detect-ip": "npx ts-node scripts/set-ip.ts",
     "connect-device": "./scripts/adb-auto-connect.sh"
   },
   "dependencies": {

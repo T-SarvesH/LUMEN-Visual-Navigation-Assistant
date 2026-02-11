@@ -77,3 +77,6 @@
 [00:58] The path ahead is clear.
 [02:12] The path ahead is clear.
 [02:42] The path ahead is clear.
+[02:08] The path ahead is clear.
+[02:38] A person is directly ahead, and another is far to your left.
+[06:47] The path ahead is clear.
