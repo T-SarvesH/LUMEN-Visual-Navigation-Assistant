@@ -1,10 +1,11 @@
 # models_pipeline/config.py
 import os
 
-# BASE directory where collab-model-training is located (update if different)
-BASE_MODELS_DIR = os.path.expanduser(
-    "../collab-model-training"
-)
+# BASE directory where collab-model-training is located (Updated to match project structure)
+BASE_MODELS_DIR = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), 
+    "../../collab-model-training"
+))
 
 # EfficientNet router model (update filename if you saved differently)
 ROUTER_MODEL_PATH = os.path.join(
@@ -24,9 +25,9 @@ IMG_SIZE = 300
 # YOLO specialized models mapping — update paths if your weights are elsewhere
 YOLO_MODELS = {
     "Animal": os.path.join(BASE_MODELS_DIR, "Animal_Detection_Lumen/Version1-Results/train/weights/best.pt"),
-    "Vehicle": os.path.join(BASE_MODELS_DIR, "Vehicle_Detection_Lumen/Version1-Results/train/weights/best.pt"),
+    "Vehicle": os.path.join(BASE_MODELS_DIR, "Vehicle_Detection_Lumen/Version-2/best.pt"),
     "Pedestrian": os.path.join(BASE_MODELS_DIR, "Pedestrian_Detection_Lumen/yolo11_custom2/weights/best.pt"),
-    "Environmental_Hazard": os.path.join(BASE_MODELS_DIR, "Environmental_Hazard_Lumen/Version1-Results/train/weights/best.pt"),
+    "Environmental_Hazard": os.path.join(BASE_MODELS_DIR, "Environmental_Hazard_Lumen/Version-2/best.pt"),
 }
 
 #A simple check to see whether the model files exist
