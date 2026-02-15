@@ -70,7 +70,7 @@ const LandingScreen: React.FC<LandingScreenProps> = ({ navigation }) => {
             className={`flex-1 py-4 rounded-xl items-center transition-all ${isDevMode ? 'bg-zinc-800 shadow-md' : 'bg-transparent'}`}
           >
             <StyledText className={`font-bold text-xs tracking-[2px] ${isDevMode ? 'text-red-400' : 'text-zinc-500'}`}>
-              RESEARCH
+             TESTING 
             </StyledText>
           </StyledTouchable>
         </StyledView>
