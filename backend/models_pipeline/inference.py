@@ -147,7 +147,7 @@ class InferenceManager:
     def check_immediate_threats(self, threat_data) -> Optional[str]:
         """
         Checks for critical threats in real-time.
-        Returns a short, urgent warning string if a threat is detected.
+        Returns an actionable, context-aware warning string.
         """
         current_time = time.time()
         
@@ -161,8 +161,16 @@ class InferenceManager:
             self.last_alert_time = current_time
             obj_name = critical_threat["object"]
             position = critical_threat["position"]
-            # Short, urgent text
-            return f"Stop! {obj_name} {position}."
+            evasion = critical_threat["evasion"]
+            is_vehicle = critical_threat["is_vehicle"]
+            
+            # --- Context-Aware Formatting ---
+            if is_vehicle:
+                # Fast moving threats require yielding and waiting
+                return f"Danger! {obj_name} approaching {position}. Stop, {evasion}, and wait for it to pass."
+            else:
+                # Static / slow moving threats require path correction
+                return f"Stop. {obj_name} {position}. Please {evasion} to navigate around it."
             
         return None
     
