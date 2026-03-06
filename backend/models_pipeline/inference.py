@@ -144,14 +144,13 @@ class InferenceManager:
         except Exception as e:
             print(f"Async Narrator Failed: {e}")
 
-    def check_immediate_threats(self, threat_data) -> Optional[str]:
+    def check_immediate_threats(self, threat_data) -> Optional[dict]:
         """
         Checks for critical threats in real-time.
-        Returns an actionable, context-aware warning string.
+        Returns a dictionary with actionable text and the threat category.
         """
         current_time = time.time()
         
-        # Don't spam warnings
         if current_time - self.last_alert_time < self.alert_cooldown:
             return None
 
@@ -164,13 +163,16 @@ class InferenceManager:
             evasion = critical_threat["evasion"]
             is_vehicle = critical_threat["is_vehicle"]
             
-            # --- Context-Aware Formatting ---
             if is_vehicle:
-                # Fast moving threats require yielding and waiting
-                return f"Danger! {obj_name} approaching {position}. Stop, {evasion}, and wait for it to pass."
+                alert_text = f"Danger! {obj_name} approaching {position}. Stop, {evasion}, and wait for it to pass."
             else:
-                # Static / slow moving threats require path correction
-                return f"Stop. {obj_name} {position}. Please {evasion} to navigate around it."
+                alert_text = f"Stop. {obj_name} {position}. Please {evasion} to navigate around it."
+            
+            # Return both text and type
+            return {
+                "text": alert_text,
+                "type": critical_threat["threat_type"]
+            }
             
         return None
     

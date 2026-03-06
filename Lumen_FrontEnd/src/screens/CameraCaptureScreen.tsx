@@ -195,7 +195,21 @@ export default function CameraCaptureScreen({ navigation }: Props) {
             // CRITICAL ALERT
             else if (data.type === "critical_alert") {
               console.log("CRITICAL ALERT RECEIVED:", data.text);
-              Vibration.vibrate([0, 500, 100, 500]);
+              
+              // --- CONTEXTUAL HAPTIC PATTERNS ---
+              // Android expects an array of [wait, vibrate, wait, vibrate...]
+              // iOS respects similar timing patterns
+              if (data.threat_category === "vehicle") {
+                 // Fast, urgent pulsating vibration
+                 Vibration.vibrate([0, 150, 50, 150, 50, 150]);
+              } else if (data.threat_category === "person") {
+                 // Two quick, distinct taps
+                 Vibration.vibrate([0, 100, 100, 100]);
+              } else {
+                 // Static objects (walls, potholes): One solid, heavy vibration
+                 Vibration.vibrate([0, 600]);
+              }
+
               try {
                 Tts.stop();
                 Tts.speak(data.text);

@@ -432,13 +432,22 @@ class ThreatAnalyzer:
             vehicle_classes = {"car", "truck", "bus", "train", "motorcycle", "bicycle", "scooter", "auto", "bike", "vehicles", "cars"}
             
             is_vehicle = any(v in raw_class or v in obj_name.lower() for v in vehicle_classes)
+            is_person = "person" in raw_class or "person" in obj_name.lower()
+
+            if is_vehicle:
+                threat_category = "vehicle"
+            elif is_person:
+                threat_category = "person"
+            else:
+                threat_category = "static"
 
             return {
                 "object": obj_name,
                 "score": highest_threat["threat_score"],
                 "position": pos,
                 "evasion": evasion,
-                "is_vehicle": is_vehicle
+                "is_vehicle": is_vehicle,
+                "threat_type": threat_category
             }
             
         return None
