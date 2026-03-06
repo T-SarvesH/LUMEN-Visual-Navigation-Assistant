@@ -9,6 +9,7 @@ import cv2
 import django
 
 # --- DJANGO SETUP FOR STANDALONE SCRIPT ---
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # Add backend root
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
 django.setup()
 
@@ -142,8 +143,7 @@ class LumenTrack(VideoStreamTrack):
         results = inference_manager.process_frame(img, return_info=True)
         return results
 
-from fastapi import FastAPI, WebSocket, Depends
-from functools import lru_cache
+
 
 # ... imports ...
 

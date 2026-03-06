@@ -16,11 +16,21 @@ interface SettingsContextType {
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
+// Module-level variable to persist state across Activity restarts (Orientation Changes)
+let globalIsDevMode = false;
+
 export const SettingsProvider = ({ children }: { children: ReactNode }) => {
   const [duration, setDuration] = useState<Duration>(15);
   const [language, setLanguage] = useState<Language>('English');
-  const [isDevMode, setIsDevMode] = useState<boolean>(false);
+  // Initialize from global variable
+  const [isDevMode, _setIsDevMode] = useState<boolean>(globalIsDevMode);
   const [isRecordingEnabled, setIsRecordingEnabled] = useState<boolean>(false);
+
+  // Wrapper to update both state and global variable
+  const setIsDevMode = (val: boolean) => {
+    globalIsDevMode = val;
+    _setIsDevMode(val);
+  };
 
   return (
     <SettingsContext.Provider value={{

@@ -1,4 +1,10 @@
 import sys, os, json, asyncio, logging
+import django
+
+# --- Django Setup (Must be before importing models) ---
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # Add backend root to path
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+django.setup()
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -98,7 +104,6 @@ class LumenTrack(VideoStreamTrack):
                         "latency": latency,
                         "obj_count": obj_count
                     }))
-                except Exception:
                 except Exception:
                     pass # Don't crash if buffer full
 
