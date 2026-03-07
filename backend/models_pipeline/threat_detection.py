@@ -362,36 +362,92 @@ class ThreatAnalyzer:
     def get_critical_threat(self, threat_data, frame_width=1280):
         """
         Scans processed threat clusters for immediate dangers.
-        Returns the object and its specific direction.
+        Returns the object, its specific direction, and safe path correction.
         """
         CRITICAL_THRESHOLD = 0.85
         highest_threat = None
         max_score = -1.0
 
+        # Matrix to track which areas of the path are blocked
+        occupied_zones = {"left": False, "center": False, "right": False}
+
         for _, data in threat_data.items():
             score = data.get("threat_score", 0.0)
+            x1, _, x2, _ = data["bbox-coords"]
+            cx = (x1 + x2) / 2
             
+            # Any object with a moderate threat score (0.35+) blocks an escape path
+            if score > 0.35:
+                if cx < frame_width * 0.35:
+                    occupied_zones["left"] = True
+                elif cx > frame_width * 0.65:
+                    occupied_zones["right"] = True
+                else:
+                    occupied_zones["center"] = True
+
+            # Track the highest critical threat
             if score > CRITICAL_THRESHOLD and score > max_score:
                 max_score = score
                 highest_threat = data
 
         if highest_threat:
-            # Calculate horizontal center of the bbox
+            # Calculate horizontal center of the critical threat
             x1, _, x2, _ = highest_threat["bbox-coords"]
             cx = (x1 + x2) / 2
             
-            # Determine Direction based on Frame Width segments
-            # Left < 35% | 35% < Ahead < 65% | Right > 65%
+            # 1. Determine Position & Evasion Strategy
             if cx < frame_width * 0.35:
                 pos = "on your left"
+                if not occupied_zones["right"]:
+                    evasion = "step to your right"
+                elif not occupied_zones["center"]:
+                    evasion = "move slightly right"
+                else:
+                    evasion = "step back"
+                    
             elif cx > frame_width * 0.65:
                 pos = "on your right"
+                if not occupied_zones["left"]:
+                    evasion = "step to your left"
+                elif not occupied_zones["center"]:
+                    evasion = "move slightly left"
+                else:
+                    evasion = "step back"
+                    
             else:
                 pos = "directly ahead"
+                # If directly ahead, find the safest side
+                if not occupied_zones["left"] and not occupied_zones["right"]:
+                    evasion = "step to your left" if cx > (frame_width * 0.5) else "step to your right"
+                elif not occupied_zones["left"]:
+                    evasion = "step to your left"
+                elif not occupied_zones["right"]:
+                    evasion = "step to your right"
+                else:
+                    evasion = "step back"
+
+            # 2. Check if the object is a vehicle for context-aware alerts
+            obj_name = highest_threat["object"]
+            raw_class = highest_threat.get("raw_class", obj_name).lower()
+            vehicle_classes = {"car", "truck", "bus", "train", "motorcycle", "bicycle", "scooter", "auto", "bike", "vehicles", "cars"}
+            
+            is_vehicle = any(v in raw_class or v in obj_name.lower() for v in vehicle_classes)
+            is_person = "person" in raw_class or "person" in obj_name.lower()
+
+            if is_vehicle:
+                threat_category = "vehicle"
+            elif is_person:
+                threat_category = "person"
+            else:
+                threat_category = "static"
 
             return {
-                "object": highest_threat["object"],
+                "object": obj_name,
                 "score": highest_threat["threat_score"],
-                "position": pos
+                "position": pos,
+                "evasion": evasion,
+                "is_vehicle": is_vehicle,
+                "threat_type": threat_category
             }
+            
         return None

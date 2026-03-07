@@ -9,6 +9,7 @@ import cv2
 import django
 
 # --- DJANGO SETUP FOR STANDALONE SCRIPT ---
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # Add backend root
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
 django.setup()
 
@@ -81,10 +82,11 @@ class LumenTrack(VideoStreamTrack):
                 
                 # PRIORITY 1: Critical Alert
                 if critical_alert:
-                    print(f"!!! CRITICAL ALERT SENT: {critical_alert}")
+                    print(f"!!! CRITICAL ALERT SENT: {critical_alert['text']}")
                     self.metadata_channel.send(json.dumps({
                         "type": "critical_alert",
-                        "text": critical_alert,
+                        "text": critical_alert["text"],
+                        "threat_category": critical_alert["type"], # Send the category to frontend
                         "language": self.user_state.speech_language
                     }))
                 
@@ -114,7 +116,7 @@ class LumenTrack(VideoStreamTrack):
                     frame_id=self.frame_count,
                     threat_data=results.get("threat_data"),
                     detections=results.get("detections"),
-                    narration=narration or critical_alert, 
+                    narration=narration or (critical_alert["text"] if critical_alert else None), 
                     frame_img=annotated_img
                 )
             self.frame_count += 1
@@ -142,8 +144,7 @@ class LumenTrack(VideoStreamTrack):
         results = inference_manager.process_frame(img, return_info=True)
         return results
 
-from fastapi import FastAPI, WebSocket, Depends
-from functools import lru_cache
+
 
 # ... imports ...
 
